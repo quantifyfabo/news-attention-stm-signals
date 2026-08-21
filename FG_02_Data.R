@@ -52,7 +52,7 @@ write.csv(NYT_clean_EN, "NYT_clean_EN.csv")
 
 # # Translation of TS (German -> English) with API Key by DeeplPro (One Time Use, Only with Key)
 
-# #Sys.setenv(DEEPL_AUTH_KEY = "Key Inactive")
+# #Sys.setenv(DEEPL_AUTH_KEY = "Key input here")
 # #TS_EN <- TS_clean_DE %>%
 #   rename(ts_text_de = text) %>%
 #   mutate(ts_text_en = NA_character_)
@@ -73,7 +73,6 @@ write.csv(NYT_clean_EN, "NYT_clean_EN.csv")
 # translations <- map(batches, translate_batch) %>% unlist()
 # TS_EN$ts_text_en <- translations
 #
-# # Zwischenspeichern
 # saveRDS(TS_EN, "TS_translated_en_v1.rds")
 # write.csv(TS_EN, "TS_clean_EN.csv") # safes as csv
 
@@ -124,7 +123,7 @@ write.csv(Combined_TS_NYT, "Combined_TS_NYT.csv")
 
 
 
-# PART 3 - Country Finder (identify countries in text variable)
+# optional Country Finder (identify countries in text variable)
 
 # base country list using the countrycode package
 countries <- countrycode::codelist %>%
@@ -158,7 +157,7 @@ demonyms <- tibble(
     "\\bFrench\\b",
     "\\bChinese\\b"))
 
-# abbreviations (Abkürzungen) not covered by countrycode names
+# abbreviations not covered by countrycode names
 abbreviations <- tibble(
   iso = c("USA", "USA", "GBR"),
   pattern = c("\\bUS\\b", "\\bUSA\\b", "\\bUK\\b"))
@@ -198,7 +197,7 @@ write.csv(Combined_TS_NYT_C, "Combined_TS_NYT_C.csv")
 
 
 
-# PART 4 - Split again into TS und NYT
+# split into TS / NYT
 TS_Input <- Combined_TS_NYT_C %>%
   filter(outlet == "TS") # includes 2414 cases with country n = 0
 
