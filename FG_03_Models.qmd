@@ -1,0 +1,967 @@
+---
+title: "MT_03_Models"
+author: "Fabian Gienke"
+format: 
+  html:
+    toc: true           # Inhaltsverzeichnis am Rand
+    code-fold: false     
+    code-summary: "Code anzeigen"
+    theme: cosmo
+execute:
+  cache: true   
+  results: 'hide'
+  message: false        
+editor_options: 
+  chunk_output_type: console
+---
+
+## STM and GT
+
+This part of the code runs all models and pre-models like searchK. This includes STM specific data processing, STM Model 1 (no covariates), STM Model 2 (with covariates) for both TS and NYT. Also data is aggregated weekly to match GT. The GT data is added and processed to match the structure. The only Input Data needed is the TS & NYT Output from MT_02_Preprocessing for STM and the Keyword_List.xlsx for GT.
+
+Packages:
+
+```{r}
+library(stm)
+library(tidyverse)
+library(quanteda)
+library(textstem)
+library(stopwords)
+library(readxl)
+library(dplyr)
+library(purrr)
+```
+
+## Load Data
+
+The data input consists of TS_Input and NYT_Input.
+
+The file path needs to be changed accordingly.
+
+```{r}
+#| label: Load Data
+# Input data
+TS_Input <- read.csv('/TS_Input.csv', row.names = 1)
+NYT_Input <- read.csv('/NYT_Input.csv', row.names = 1)
+
+```
+
+## STM Preprocessing for TS
+
+The quanteda packages is applied for STM processing and data cleaning as discussed in Section 3 Methods (Masterthesis). This includes insuring right data types, removing punctuation, numbers, symbols, seperators. Also lower casing and stopword are removed. Then building a DFM (Data Frequency Matrix) for the STM Input. Covariates are added for the second model for robustness checks and include date, country_iso (as identified by country finder) and country_n (numbers of countries mentioned in each document).
+
+```{r}
+#| label: Preprocessing TS for STM
+# Preprocessing: Lemmatization to reduce words to basic form
+TS_Input$text_lemma <- lemmatize_strings(TS_Input$text)
+
+# Preprocessing: quanteda preprocessing Corpus (more control than basic stm preprocessing functions)
+TS_Input$doc_id <- as.character(1:nrow(TS_Input)) 
+corpus_TS <- corpus(TS_Input, text_field = "text_lemma", docid_field = "doc_id")
+
+# Preprocessing: Tokenization to remoce punctuation, numbers
+tokens_TS <- quanteda::tokens(
+  corpus_TS,
+  remove_punct = TRUE,
+  remove_numbers = TRUE,
+  remove_symbols = TRUE,
+  remove_separators = TRUE)
+
+tokens_TS <- tokens_tolower(tokens_TS) # Lowercase
+tokens_TS <- tokens_remove(tokens_TS, stopwords(language = "en", source = "snowball")) # Remove stopwords with smart (n=571) list or snowball base list (178)
+
+dfm_TS <- dfm(tokens_TS) # Preprocessing: DFM 
+dfm_TS <- dfm_trim(dfm_TS, min_termfreq = 10) # Trim rare words <10
+
+# Convert quanteda objects to STM format (STM inputs)
+stm_input_TS <- convert(dfm_TS, to = "stm")
+documents_TS <- stm_input_TS$documents
+vocab_TS <- stm_input_TS$vocab
+meta_TS <- TS_Input[match(docnames(dfm_TS), TS_Input$doc_id), ]
+
+
+
+
+
+# TS // define metadata / covariates for the STM Input
+meta_TS$date_numeric <- as.numeric(as.Date(meta_TS$date))
+meta_TS$country_iso <- ifelse(is.na(meta_TS$country_iso), "none", as.character(meta_TS$country_iso))
+meta_TS$country_n <- ifelse(is.na(meta_TS$country_n), "none", as.character(meta_TS$country_n))
+
+meta_TS$country_n <- as.factor(meta_TS$country_n)
+meta_TS$country_iso <- as.factor(meta_TS$country_iso)
+```
+
+## STM Preprocessing for NYT
+
+The NYT processing follows the exact steps of the TS processing.
+
+```{r}
+#| label: Preprocessing NYT for STM
+# PART 2 for NYT (identical to TS processing)
+set.seed(2026)
+# Lemmatization to reduce words to basic form
+NYT_Input$text_lemma <- lemmatize_strings(NYT_Input$text)
+
+# quanteda preprocessing Corpus (more control than basic stm preprocessing functions)
+NYT_Input$doc_id <- as.character(1:nrow(NYT_Input))
+corpus_NYT <- corpus(NYT_Input, text_field = "text_lemma", docid_field = "doc_id")
+# Tokenization to remoce punctuation, numbers
+tokens_NYT <- quanteda::tokens(
+  corpus_NYT,
+  remove_punct = TRUE,
+  remove_numbers = TRUE,
+  remove_symbols = TRUE,
+  remove_separators = TRUE)
+
+tokens_NYT <- tokens_tolower(tokens_NYT) # Lowercase
+tokens_NYT <- tokens_remove(tokens_NYT, stopwords(language = "en", source = "snowball")) 
+tokens_NYT <- tokens_remove(tokens_NYT, c("s", "said", "would", "also", "one")) # additional stopwords
+
+# tokens_NYT <- tokens_remove(tokens_NYT, c("said", "would")) # additional stoword list extended
+# DFM 
+dfm_NYT <- dfm(tokens_NYT)
+dfm_NYT <- dfm_trim(dfm_NYT, min_termfreq = 10) # Trim rare words
+
+# Convert to STM format
+stm_input_NYT <- convert(dfm_NYT, to = "stm")
+documents_NYT <- stm_input_NYT$documents
+vocab_NYT <- stm_input_NYT$vocab
+meta_NYT <- NYT_Input[match(docnames(dfm_NYT), NYT_Input$doc_id), ]
+
+
+
+
+# NYT // defined metadata / covariates for the STM Input
+meta_NYT$date_numeric <- as.numeric(as.Date(meta_NYT$date))
+meta_NYT$country_iso <- ifelse(is.na(meta_NYT$country_iso), "none", as.character(meta_NYT$country_iso))
+meta_NYT$country_n <- ifelse(is.na(meta_NYT$country_n), "none", as.character(meta_NYT$country_n))
+
+meta_NYT$country_n <- as.factor(meta_NYT$country_n)
+meta_NYT$country_iso <- as.factor(meta_NYT$country_iso)
+```
+
+## SearchK
+
+SearchK is applied as an important component to identify the optimal number of topics *k* as discussed in section 3 Methods in the Masterthesis. This is applied on the Model 1 without covariates for both TS and NYT. Results indicate *k*=15 topics is a optimal tradeoff.
+
+```{r}
+#| label: SearchK
+# # 5. searchK to find optimal number k of topics for stm with TS data
+# k_result_TS <- searchK(
+#   documents = documents_TS,
+#   vocab = vocab_TS,
+#   K = c(5, 10, 15, 20, 25, 30),
+#   prevalence = ~ 1,
+#   data = meta_TS,
+#   init.type = "Spectral")
+# 
+# plot(k_result_TS)
+# title(main = "Tagesschau Data",
+#       line = 3,
+#       cex.main = 1)
+# 
+# 
+# 
+# 
+# # # 5. searchK to find optimal number k of topics for stm with NYT data
+#  k_result_NYT <- searchK(
+#    documents = documents_NYT,
+#    vocab = vocab_NYT,
+#    K = c(5, 10, 15, 20, 25, 30),
+#    prevalence = ~ 1,
+#    data = meta_NYT,
+#    init.type = "Spectral")
+# 
+#  plot(k_result_NYT)
+#  title(main = "NYT Data",
+#        line = 3,
+#        cex.main = 1)
+```
+
+## STM Model 1 (no covariates) for TS
+
+This step runs the STM for TS (no covariates) and shows the output topwords, also the labeling and dominant theta is applied. Labeling decisions are discussed in section 3 Methods and Keyword_List.xlsx.
+
+After the stm is run and labeled the output is aggregated on (1) daily level for descriptive analysis of topic distributions and (2) most importantly on weekly level to match the GT output. This allows to compare Media Attenton (TS) with Pulic Interest (GT) on the same weekly aggregated time series starting sunday each week.
+
+The main output is "TS_Theta_Weekly_STM.csv" which is a weekly aggregated time series that will be compared to GT and be used for robustness checks.
+
+```{r}
+#| label: STM TS no Cov
+# STM Model
+stm_model_TS <- stm(
+  documents = documents_TS,
+  vocab = vocab_TS,
+  K = 15, # 15 topics
+  prevalence = ~ 1, # no use of date
+  data = meta_TS,
+  max.em.its = 75,
+  init.type = "Spectral",
+  seed = 2026)
+
+# Topics Top Words (unlabeled)
+labelTopics(stm_model_TS, n = 10)
+
+theta_TS <- stm_model_TS$theta
+theta_df_TS <- as.data.frame(theta_TS)
+colnames(theta_df_TS) <- paste0("topic_", 1:ncol(theta_df_TS))
+TS_theta <- bind_cols(meta_TS, theta_df_TS)
+
+# Label Topics (manual based on Top Words)
+topic_labels_TS <- c(
+  "Natural Disasters",        # Topic 1 
+  "EU Politics",              # Topic 2 
+  "else",                     # Topic 3 (drop)
+  "US Politics",              # Topic 4 
+  "University & Protests",    # Topic 5
+  "Military & Geopolitics",   # Topic 6
+  "else",                     # Topic 7 (drop)
+  "Ukraine War",              # Topic 8 
+  "EU Right-wing Politics",   # Topic 9
+  "Diplomacy",                # Topic 10
+  "Israel Gaza Conflict",     # Topic 11 
+  "Fires & Climate Disasters",# Topic 12
+  "Accidents",                # Topic 13
+  "Elections",                # Topic 14
+  "else"                      # Topic 15 (drop)
+)
+
+# dominant topic index
+dominant_topic_TS <- apply(theta_TS, 1, which.max)
+dominant_theta_TS <- apply(theta_TS, 1, max) # dominant theta value
+dominant_label_TS <- topic_labels_TS[dominant_topic_TS]
+
+# add labels to TS data
+TS_Output <- meta_TS %>%
+  mutate(
+    dominant_topic = dominant_topic_TS,
+    dominant_theta = dominant_theta_TS,
+    topic_label = dominant_label_TS)
+
+table(TS_Output$topic_label)
+
+# highlight all cases (TS articles) with dominant theta <40 (no clear topic assignment) as else
+TS_Output <- TS_Output %>%
+  mutate(
+    topic_label_clean = ifelse(dominant_theta < 0.4, "else", topic_label))
+
+
+
+# The following code aggregates the data on daily and weekly level to make them comparable to GT output.
+
+# Create aggregated TS Dataset Daily
+TS_theta$date <- as.Date(TS_theta$date) # Date format
+theta_cols <- paste0("topic_", 1:15) # Topic-cols
+
+# Daily Aggregation (all topics)
+TS_Theta_Daily <- TS_theta %>%
+  group_by(date) %>%
+  summarise(across(all_of(theta_cols), \(x) sum(x, na.rm = TRUE)),
+            .groups = "drop")
+
+# clean variable names: remove spaces & special characters completely
+clean_names <- gsub("[^A-Za-z0-9]", "", topic_labels_TS)
+clean_names <- make.unique(clean_names)
+colnames(TS_Theta_Daily)[-1] <- clean_names
+
+
+# Create aggregated TS Dataset Weekly
+TS_Theta_Daily$date <- as.Date(TS_Theta_Daily$date)
+theta_cols <- names(TS_Theta_Daily)[names(TS_Theta_Daily) != "date"]
+
+# function: round to last sunday (GT logic to match GT Data)
+get_sunday <- function(x) {
+  x - wday(x, week_start = 1) %% 7}
+
+# Weekly Aggregation
+TS_Theta_Weekly <- TS_Theta_Daily %>%
+  mutate(
+    week_start = get_sunday(date),
+    KW = isoweek(week_start),
+    year = year(week_start),
+    KW_Y = paste0("KW_", KW, "_", year)
+  ) %>%
+  group_by(week_start, KW, year, KW_Y) %>%
+  summarise(
+    across(all_of(theta_cols), \(x) sum(x, na.rm = TRUE)),
+    .groups = "drop"
+  ) %>%
+  arrange(week_start)
+
+
+# 1. "else"-Topics removed
+TS_Theta_Weekly <- TS_Theta_Weekly %>% 
+  select(-matches("else"))
+
+# 2. _norm Suffix for scaling (0-100 scale)
+TS_Theta_Weekly <- TS_Theta_Weekly %>%
+  mutate(across(NaturalDisasters:Elections, 
+                ~ (. / max(., na.rm = TRUE)) * 100, 
+                .names = "{.col}_norm"))
+
+# Long format
+TS_Theta_Weekly_long <- TS_Theta_Weekly %>%
+  pivot_longer(
+    cols = -c(week_start, KW, year, KW_Y),
+    names_to = "topic",
+    values_to = "theta")
+
+# Long format
+TS_Theta_Weekly_long <- TS_Theta_Weekly_long %>%
+  group_by(topic) %>%
+  mutate(theta_scaled = theta / max(theta))
+```
+
+## STM Model 1 (no covariates) for NYT
+
+This follows the exact same steps as the TS STM with identical settings, labeling and data aggregation on daily and weekly level.
+
+The Output is "NYT_Theta_Weekly_STM.csv" which is a weekly aggregated time series that will be compared to GT and be used for robustness checks.
+
+```{r}
+#| label: STM NYT no cov
+
+# STM Model
+stm_model_NYT <- stm(
+  documents = documents_NYT,
+  vocab = vocab_NYT,
+  K = 15,
+  prevalence = ~ 1,
+  data = meta_NYT,
+  max.em.its = 75,
+  init.type = "Spectral",
+  seed = 2026)
+
+# Topics (unlabeled)
+labelTopics(stm_model_NYT, n = 10)
+
+
+
+# Theta extraction
+theta_NYT <- stm_model_NYT$theta
+theta_df_NYT <- as.data.frame(theta_NYT)
+colnames(theta_df_NYT) <- paste0("topic_", 1:ncol(theta_df_NYT))
+NYT_theta <- bind_cols(meta_NYT, theta_df_NYT)
+
+# Label Topics (manual based on Top Words)
+topic_labels_NYT <- c(
+  "else",                        # Topic 1 (drop)
+  "Asia Geopolitics",            # Topic 2 
+  "Ukraine War",                 # Topic 3 
+  "else",                        # Topic 4 (drop)
+  "Crime & Justice",             # Topic 5 
+  "Accidents",                   # Topic 6 
+  "Syria & Middle East Politics",# Topic 7
+  "else",                        # Topic 8 (drop)
+  "Global Leaders & Conflict",   # Topic 9
+  "Economic & Political Crises", # Topic 10
+  "else",                        # Topic 11 (drop)
+  "Israel Gaza Conflict",        # Topic 12 
+  "else",                        # Topic 13 (drop)
+  "Religion & Culture",          # Topic 14 
+  "else"                         # Topic 15 (drop)
+)
+
+# dominant topic index
+dominant_topic_NYT <- apply(theta_NYT, 1, which.max)
+dominant_theta_NYT <- apply(theta_NYT, 1, max) # dominant theta value
+dominant_label_NYT <- topic_labels_NYT[dominant_topic_NYT]
+
+# add labels to NYT data
+NYT_Output <- meta_NYT %>%
+  mutate(
+    dominant_topic = dominant_topic_NYT,
+    dominant_theta = dominant_theta_NYT,
+    topic_label = dominant_label_NYT)
+
+table(NYT_Output$topic_label)
+
+# highlight all cases (NYT articles) with dominant theta <40 (no clear topic assignment) as else
+NYT_Output <- NYT_Output %>%
+  mutate(
+    topic_label_clean = ifelse(dominant_theta < 0.4, "else", topic_label) # theta treshold
+  )
+
+# safe data
+write.csv(TS_Output, "TS_Output.csv")
+write.csv(NYT_Output, "NYT_Output.csv")
+
+
+# The following code aggregates the data on daily and weekly level to make them comparable to GT output.
+
+# Create aggregated NYT Dataset Daily
+NYT_theta$date <- as.Date(NYT_theta$date) # Date format
+theta_cols <- paste0("topic_", 1:15) # Topic-cols
+
+# Daily Aggregation (all topics)
+NYT_Theta_Daily <- NYT_theta %>%
+  group_by(date) %>%
+  summarise(across(all_of(theta_cols), \(x) sum(x, na.rm = TRUE)),
+            .groups = "drop")
+
+# clean variable names: remove spaces & special characters completely
+clean_names <- gsub("[^A-Za-z0-9]", "", topic_labels_NYT)
+clean_names <- make.unique(clean_names) # handle duplicates like "else"
+colnames(NYT_Theta_Daily)[-1] <- clean_names
+
+
+# Create aggregated NYT Dataset Weekly
+NYT_Theta_Daily$date <- as.Date(NYT_Theta_Daily$date)
+theta_cols <- names(NYT_Theta_Daily)[names(NYT_Theta_Daily) != "date"] 
+
+# function: round to last sunday (GT logic to match GT Data)
+get_sunday <- function(x) {
+  x - wday(x, week_start = 1) %% 7}
+
+# Weekly Aggregation
+NYT_Theta_Weekly <- NYT_Theta_Daily %>%
+  mutate(
+    week_start = get_sunday(date),
+    KW = isoweek(week_start),
+    year = year(week_start),
+    KW_Y = paste0("KW_", KW, "_", year)
+  ) %>%
+  group_by(week_start, KW, year, KW_Y) %>%
+  summarise(
+    across(all_of(theta_cols), \(x) sum(x, na.rm = TRUE)),
+    .groups = "drop"
+  ) %>%
+  arrange(week_start)
+
+# 1. "else"-Topics removed
+NYT_Theta_Weekly <- NYT_Theta_Weekly %>% 
+  select(-matches("else"))
+
+# 2. _norm Suffix variables (0-100 scale)
+NYT_Theta_Weekly <- NYT_Theta_Weekly %>%
+  mutate(across(AsiaGeopolitics:ReligionCulture, 
+                ~ (. / max(., na.rm = TRUE)) * 100, 
+                .names = "{.col}_norm"))
+
+
+# Create long format (same as TS)
+NYT_Theta_Weekly_long <- NYT_Theta_Weekly %>%
+  pivot_longer(
+    cols = -c(week_start, KW, year, KW_Y),
+    names_to = "topic",
+    values_to = "theta")
+
+# Normalize per topic (same logic as TS)
+NYT_Theta_Weekly_long <- NYT_Theta_Weekly_long %>%
+  group_by(topic) %>%
+  mutate(theta_scaled = theta / max(theta)) %>%
+  ungroup()
+
+
+```
+
+# Plot STM Output Time Series for TS and NYT
+
+This shows an short summary of the time series for TS and NYT and safes the resulting time series as csv in the base format and long format. Base format will be used as time series against GT and long format for simple and intuitive plots. The data remains the same.
+
+```{r}
+#| label: Plot Output (short check)
+
+# PLOT Weekly Change TS
+
+ggplot(TS_Theta_Weekly_long, aes(x = week_start, y = theta_scaled, color = topic)) +
+  geom_line() +
+  theme_minimal()
+
+# Plot per topic (facet)
+ggplot(TS_Theta_Weekly_long, aes(x = week_start, y = theta_scaled)) +
+  geom_line() +
+  facet_wrap(~topic, scales = "free_y") +
+  theme_minimal()
+
+write.csv(TS_Theta_Weekly, "TS_Theta_Weekly_STM.csv")
+write.csv(TS_Theta_Weekly_long, "TS_Theta_Weekly_long_STM.csv")
+
+
+
+# PLOT Weekly Change NYT
+
+ggplot(NYT_Theta_Weekly_long, aes(x = week_start, y = theta_scaled, color = topic)) +
+  geom_line() +
+  theme_minimal()
+
+# Plot per topic (facet)
+ggplot(NYT_Theta_Weekly_long, aes(x = week_start, y = theta_scaled)) +
+  geom_line() +
+  facet_wrap(~topic, scales = "free_y") +
+  theme_minimal()
+
+# Save output
+write.csv(NYT_Theta_Weekly, "NYT_Theta_Weekly_STM")
+write.csv(NYT_Theta_Weekly_long, "NYT_Theta_Weekly_long_STM.csv")
+```
+
+## Model 2 (with covariates) for TS
+
+The second model will not be the main model as discussed in section 3 Methods. It will be used as a robustness check to see if metadata (covariates) influence topic aggregation and therefore potentially show different results when comparing Media Attention to Public Interest (GT).
+
+The preprocessing of all Metadata is executed in the preprocessing steps above. Covariates include date, country_iso and country_n for each document.
+
+By comparing the changes in theta distribution from Model 1 (no covariates) and Model 2 (covariates) on document level, it can be seen if the model adapts to metadata (Agreement Rate in %). Also the topwords may be influenced so topic order and labels could differ. This is discussed in the Masterthesis Results section on robustness checks. This approach follows the dominant theta approach and not the aggregated approach, to compare on document level.
+
+```{r}
+#| label: Model 2 TS with covariates
+
+# STM Model with Covariates
+stm_model_TS_cov <- stm(
+  documents = documents_TS,
+  vocab = vocab_TS,
+  K = 15, # 15 topics
+  prevalence = ~ s(date_numeric) + country_n + country_iso,
+  data = meta_TS,
+  max.em.its = 75,
+  init.type = "Spectral",
+  seed = 2026)
+
+# Topics Top Words (unlabeled)
+labelTopics(stm_model_TS_cov, n = 10)
+
+theta_TS_cov <- stm_model_TS_cov$theta
+theta_df_TS_cov <- as.data.frame(theta_TS_cov)
+
+colnames(theta_df_TS_cov) <- paste0("topic_", 1:ncol(theta_df_TS_cov))
+
+# Wichtig: meta_TS muss die gleiche Zeilenanzahl haben wie dfm_TS
+TS_theta_cov <- bind_cols(meta_TS, theta_df_TS_cov)
+
+# Manual Labels
+topic_labels_TS_cov <- c(
+  "Natural Disasters",           # Topic 1 
+  "EU Politics",                 # Topic 2 
+  "else",                        # Topic 3 (drop)
+  "US Politics",                 # Topic 4 
+  "University & Protests",       # Topic 5 
+  "Military & Geopolitics",      # Topic 6 
+  "else",                        # Topic 7 (drop)
+  "Ukraine War",                 # Topic 8 
+  "EU Right-wing Politics",      # Topic 9 
+  "Diplomacy",                   # Topic 10
+  "Israel Gaza Conflict",        # Topic 11
+  "Fires & Climate Disasters",   # Topic 12
+  "Accidents",                   # Topic 13
+  "Elections",                   # Topic 14
+  "else"                         # Topic 15 (drop)
+)
+
+# Aggregation Weekly 
+TS_weekly_theta_cov <- TS_theta_cov %>%
+  mutate(week = floor_date(as.Date(date), "week")) %>%
+  group_by(week) %>%
+  summarise(across(starts_with("topic_"), sum))
+
+
+# dominant topic index
+dominant_topic_TS_cov <- apply(theta_TS_cov, 1, which.max)
+dominant_theta_TS_cov <- apply(theta_TS_cov, 1, max) # dominant theta value
+dominant_label_TS_cov <- topic_labels_TS_cov[dominant_topic_TS_cov]
+
+# add labels to TS data
+TS_Output_cov <- meta_TS %>%
+  mutate(
+    dominant_topic = dominant_topic_TS_cov,
+    dominant_theta = dominant_theta_TS_cov,
+    topic_label = dominant_label_TS_cov)
+
+table(TS_Output_cov$topic_label)
+
+# highlight all cases (TS articles) with dominant theta <40 (no clear topic assignment) as else
+TS_Output_cov <- TS_Output_cov %>%
+  mutate(
+    topic_label_clean = ifelse(dominant_theta < 0.4, "else", topic_label))
+
+# safe data
+write.csv(TS_Output_cov, "TS_Output_cov.csv")
+
+
+
+
+# Additional (optional) TS
+# This part compares the base model (without covariates) with the new model output including covariates to check how theta distributions change
+prep_check_TS <- estimateEffect(1:15 ~ s(date_numeric) + country_iso, 
+                             stmobj = stm_model_TS_cov, 
+                             metadata = meta_TS)
+# Check for an "Spiky" Topic 
+summary(prep_check_TS, topics = 8)
+comparison_table_TS <- table(Base = TS_Output$topic_label, 
+                          Covariate = TS_Output_cov$topic_label)
+agreement_TS <- sum(diag(comparison_table_TS)) / sum(comparison_table_TS)
+print(paste0("Agreement Rate: ", round(agreement_TS * 100, 2), "%"))
+divergence_rate_TS <- 100 - (agreement_TS * 100)
+print(paste0("Divergence Rate: ", round(divergence_rate_TS, 2), "%"))
+
+
+
+
+
+# Create Dataset to compare to GT (same approach as for Model 1)
+# Daily Aggregation (to match the cleaning logic of Model 1)
+TS_Theta_Daily_cov <- TS_theta_cov %>%
+  group_by(date = as.Date(date)) %>%
+  summarise(across(starts_with("topic_"), sum, na.rm = TRUE), .groups = "drop")
+
+# Rename columns with cleaned topic labels (removing "else")
+clean_names_cov <- gsub("[^A-Za-z0-9]", "", topic_labels_TS_cov)
+clean_names_cov <- make.unique(clean_names_cov)
+colnames(TS_Theta_Daily_cov)[-1] <- clean_names_cov
+
+# Weekly Aggregation (Sunday-logic to match GT)
+TS_Theta_Weekly_cov <- TS_Theta_Daily_cov %>%
+  mutate(week_start = date - (wday(date, week_start = 1) %% 7)) %>%
+  group_by(week_start) %>%
+  summarise(across(NaturalDisasters:Elections, sum, na.rm = TRUE), .groups = "drop") %>%
+  select(-matches("else")) # Remove else topics
+
+# Create Normalized variables and add suffix _cov to ALL columns
+# This ensures Model 2 is clearly distinguishable from Model 1
+TS_Theta_Weekly_cov <- TS_Theta_Weekly_cov %>%
+  mutate(across(NaturalDisasters:Elections, 
+                ~ (. / max(., na.rm = TRUE)) * 100, 
+                .names = "{.col}_norm")) %>%
+  rename_with(~ paste0(., "_cov"), -week_start)
+
+# Save result
+write.csv(TS_Theta_Weekly_cov, "TS_Theta_Weekly_cov_STM.csv", row.names = FALSE)
+
+
+
+```
+
+## Model 2 (with covariates) for NYT
+
+This follows the exact steps of the TS STM with Covarites (see above).
+
+```{r}
+#| label: NYT Model 2 with Covariates
+# NYT // define metadata / covariates for the STM Input
+
+meta_NYT$date_numeric <- as.numeric(as.Date(meta_NYT$date))
+meta_NYT$country_iso <- ifelse(is.na(meta_NYT$country_iso), "none", as.character(meta_NYT$country_iso))
+meta_NYT$country_n <- ifelse(is.na(meta_NYT$country_n), "none", as.character(meta_NYT$country_n))
+
+meta_NYT$country_n <- as.factor(meta_NYT$country_n)
+meta_NYT$country_iso <- as.factor(meta_NYT$country_iso)
+
+
+# STM Model with Covariates
+stm_model_NYT_cov <- stm(
+  documents = documents_NYT,
+  vocab = vocab_NYT,
+  K = 15, # 15 topics
+  prevalence = ~ s(date_numeric) + country_n + country_iso,
+  data = meta_NYT,
+  max.em.its = 75,
+  init.type = "Spectral",
+  seed = 2026)
+
+# Topics Top Words (unlabeled)
+labelTopics(stm_model_NYT_cov, n = 10)
+
+
+# Theta (Themenwahrscheinlichkeiten pro Dokument) 
+theta_NYT_cov <- stm_model_NYT_cov$theta
+theta_df_NYT_cov <- as.data.frame(theta_NYT_cov)
+
+colnames(theta_df_NYT_cov) <- paste0("topic_", 1:ncol(theta_df_NYT_cov))
+
+# Theta-values inkl, metadata (date, Country etc.) 
+NYT_theta_cov <- bind_cols(meta_NYT, theta_df_NYT_cov)
+
+# Manual Labeling of NYT Data (cov) based on Keyword_List.xlsx
+topic_labels_NYT_cov <- c(
+  "Diplomacy",                    # Topic 1 
+  "Asia Geopolitics",             # Topic 2 
+  "Ukraine War",                  # Topic 3 
+  "International Law & Courts",   # Topic 4 
+  "Crime & Justice",              # Topic 5 
+  "Accidents",                    # Topic 6 
+  "Syria & Middle East Politics", # Topic 7 
+  "else",                         # Topic 8 (drop)
+  "Global Leaders & Conflict",    # Topic 9 
+  "Economic & Political Crises",  # Topic 10 
+  "else",                         # Topic 11 (drop)
+  "Israel Gaza Conflict",         # Topic 12 
+  "else",                         # Topic 13 (drop)
+  "Religion & Culture",           # Topic 14 
+  "Venezuela"                     # Topic 15 
+)
+
+# Aggregation Weekly 
+NYT_weekly_theta_cov <- NYT_theta_cov %>%
+  mutate(week = floor_date(as.Date(date), "week")) %>%
+  group_by(week) %>%
+  summarise(across(starts_with("topic_"), sum))
+
+
+# dominant topic index
+dominant_topic_NYT_cov <- apply(theta_NYT_cov, 1, which.max)
+dominant_theta_NYT_cov <- apply(theta_NYT_cov, 1, max) # dominant theta value
+dominant_label_NYT_cov <- topic_labels_NYT_cov[dominant_topic_NYT_cov]
+
+# add labels to NYT data
+NYT_Output_cov <- meta_NYT %>%
+  mutate(
+    dominant_topic = dominant_topic_NYT_cov,
+    dominant_theta = dominant_theta_NYT_cov,
+    topic_label = dominant_label_NYT_cov)
+
+table(NYT_Output_cov$topic_label)
+
+# highlight all cases (NYT articles) with dominant theta <40 (no clear topic assignment) as else
+NYT_Output_cov <- NYT_Output_cov %>%
+  mutate(
+    topic_label_clean = ifelse(dominant_theta < 0.4, "else", topic_label) # theta treshold
+  )
+
+# safe data
+write.csv(NYT_Output_cov, "NYT_Output_cov.csv")
+
+
+
+
+
+#--
+# Additional (optional) for NYT
+# This part compares the base model (without covariates) with the new model output including covariates to check how theta distributions changes for each document. This follows the dominant theta approach and not the aggregated approach.
+prep_check_NYT <- estimateEffect(1:15 ~ s(date_numeric) + country_iso, 
+                                 stmobj = stm_model_NYT_cov, 
+                                 metadata = meta_NYT)
+# Check for an "Spiky" Topic 
+summary(prep_check_NYT, topics = 3)
+comparison_table_NYT <- table(Base = NYT_Output$topic_label, 
+                              Covariate = NYT_Output_cov$topic_label)
+agreement_NYT <- sum(diag(comparison_table_NYT)) / sum(comparison_table_NYT)
+print(paste0("Agreement Rate: ", round(agreement_NYT * 100, 2), "%"))
+divergence_rate_NYT <- 100 - (agreement_NYT * 100)
+print(paste0("Divergence Rate: ", round(divergence_rate_NYT, 2), "%"))
+
+
+
+# Create Dataset to compare to GT (same approach as for Model 1)
+# Daily Aggregation
+NYT_Theta_Daily_cov <- NYT_theta_cov %>%
+  group_by(date = as.Date(date)) %>%
+  summarise(across(starts_with("topic_"), sum, na.rm = TRUE), .groups = "drop")
+
+# Rename columns with cleaned topic labels
+clean_names_NYT_cov <- gsub("[^A-Za-z0-9]", "", topic_labels_NYT_cov)
+clean_names_NYT_cov <- make.unique(clean_names_NYT_cov)
+colnames(NYT_Theta_Daily_cov)[-1] <- clean_names_NYT_cov
+
+# Weekly Aggregation (Sunday-logic) and remove else
+NYT_Theta_Weekly_cov <- NYT_Theta_Daily_cov %>%
+  mutate(week_start = date - (wday(date, week_start = 1) %% 7)) %>%
+  group_by(week_start) %>%
+  summarise(across(Diplomacy:Venezuela, sum, na.rm = TRUE), .groups = "drop") %>%
+  select(-matches("else"))
+
+# Create Normalized variables and add suffix _cov to ALL columns
+NYT_Theta_Weekly_cov <- NYT_Theta_Weekly_cov %>%
+  mutate(across(Diplomacy:Venezuela, 
+                ~ (. / max(., na.rm = TRUE)) * 100, 
+                .names = "{.col}_norm")) %>%
+  rename_with(~ paste0(., "_cov"), -week_start)
+
+# Save result
+write.csv(NYT_Theta_Weekly_cov, "NYT_Theta_Weekly_cov_STM.csv", row.names = FALSE)
+
+
+
+```
+
+## GT Data Input
+
+This part adds the GT Data for each given Topics. The Processing ensures the same time series format as the TS and NYT output with weekly aggregated search volume per topic (normalized). The full process of GT keyword selection and queries is included in the Keywords_List.xlsx.
+
+Note that the data is loaded from Keywords_List.xlsx , the file path needs to be changed accordingly.
+
+```{r}
+#| label: GT Data Loading and Processing
+# File path to Keyword_List Excel (including all topics and related keywords)
+file_path <- "/Keyword_List.xlsx"
+
+# Get all sheet names (one topic per sheet, including keywors)
+sheets <- excel_sheets(file_path)
+keywords_list_df <- read_excel(file_path, sheet = "keywords_list")
+
+# Remove metadata sheet (initial overview sheet explaining keyword finding process)
+sheets <- sheets[!sheets %in% c("MT_Keywords_Table", "keywords_list")]
+
+# Function: read, clean, aggregate duplicates (no duplicate dates and sheet names allowed)
+read_and_process <- function(sheet_name) {
+  
+  GT_sheet <- read_excel(file_path, sheet = sheet_name)
+  
+  # Convert date column
+  GT_sheet[[1]] <- as.Date(GT_sheet[[1]])
+  
+  # Convert keyword columns to numeric
+  GT_sheet[-1] <- lapply(GT_sheet[-1], as.numeric)
+  
+  # Aggregate duplicate dates (important, otherwise duplicate dates)
+  GT_sheet <- GT_sheet %>%
+    group_by(across(1)) %>%
+    summarise(across(everything(), ~ mean(.x, na.rm = TRUE)), .groups = "drop")
+  
+  # Clean keyword names (remove spaces)
+  col_names <- colnames(GT_sheet)
+  col_names[-1] <- gsub(" ", "", col_names[-1])
+  
+  # Rename columns: outlet_topic_keyword (so each column is easy to interpred and use for analysis)
+  new_names <- c(
+    "date",
+    paste0(sheet_name, "_", col_names[-1])
+  )
+  
+  colnames(GT_sheet) <- new_names
+  
+  return(GT_sheet)
+}
+
+# Read all sheets
+GT_list <- lapply(sheets, read_and_process)
+
+# Merge all sheets by date
+GT_Data_raw <- reduce(GT_list, full_join, by = "date") %>%
+  arrange(date)
+
+#Build final dataset with correct column order
+
+# Start with date (for loop to create GT df)
+GT_Data <- GT_Data_raw %>% select(date)
+
+for (topic in sheets) {
+  
+  # Select keyword columns for this topic
+  topic_cols <- grep(paste0("^", topic, "_"), names(GT_Data_raw), value = TRUE)
+  
+  # Compute aggregates
+  topic_sum <- rowSums(GT_Data_raw[topic_cols], na.rm = TRUE)
+  topic_mean <- rowMeans(GT_Data_raw[topic_cols], na.rm = TRUE)
+  
+  # Build topic block: keywords + sum + mean
+  topic_block <- GT_Data_raw %>%
+    select(all_of(topic_cols)) %>%
+    mutate(
+      !!paste0(topic, "_sum") := topic_sum,
+      !!paste0(topic, "_mean") := topic_mean
+    )
+  
+  # Append to final dataset
+  GT_Data <- bind_cols(GT_Data, topic_block)
+}
+
+# View result
+head(GT_Data)
+
+write.csv(GT_Data, "GT_Output_STM.csv")
+
+```
+
+## Merging Media Data (TS, NYT) and GT for Model 1
+
+This step combines both time series (STM Model 1 and GT) into one dataframe. This will be the main dataset for the results analysis. Each topic from the media datasets is used in its normalized (\_norm) form and each corresponding GT result in its \_mean form. This allows to compare them efficiently as time series and plot them together.
+
+```{r}
+#| label: Merge Media (STM Model 1) and GT
+
+# Merge Media Datasets (TS and NYT)
+# This creates .x (TS) and .y (NYT) suffixes for duplicate column names
+Model_1_Result_Input <- TS_Theta_Weekly %>%
+  full_join(NYT_Theta_Weekly, by = c("week_start", "KW", "year", "KW_Y"))
+
+# Join with GT Data
+Model_1_Result_Input <- Model_1_Result_Input %>%
+  left_join(GT_Data %>% rename(week_start = date), by = "week_start")
+
+# Select and pair matching variables (using .x and .y for duplicates)
+Model_1_Result_Input <- Model_1_Result_Input %>%
+  select(
+    week_start, KW, year, KW_Y,
+    
+    # TS Pairs: Media (topic_norm) and GT (topic_mean)
+    TS_NaturalDisasters_norm = NaturalDisasters_norm, TS_NaturalDisasters_gt = TS_NaturalDisaster_mean,
+    TS_EUPolitics_norm = EUPolitics_norm, TS_EUPolitics_gt = TS_EUPolitics_mean,
+    TS_USPolitics_norm = USPolitics_norm, TS_USPolitics_gt = TS_USPolitics_mean,
+    TS_MilitaryGeopolitics_norm = MilitaryGeopolitics_norm, TS_MilitaryGeopolitics_gt = TS_MilitaryGeopolitics_mean,
+    TS_UkraineWar_norm = UkraineWar_norm.x, TS_UkraineWar_gt = TS_UkraineWar_mean,
+    TS_EURightwing_norm = EURightwingPolitics_norm, TS_EURightwing_gt = TS_EURightWing_mean,
+    TS_Diplomacy_norm = Diplomacy_norm, TS_Diplomacy_gt = TS_Diplomatie_mean,
+    TS_IsraelGaza_norm = IsraelGazaConflict_norm.x, TS_IsraelGaza_gt = TS_IsraelGazaConflict_mean,
+    TS_ClimateFires_norm = FiresClimateDisasters_norm, TS_ClimateFires_gt = TS_FiresClimateDisasters_mean,
+    TS_Accidents_norm = Accidents_norm.x, TS_Accidents_gt = TS_Accidents_mean,
+    TS_Elections_norm = Elections_norm, TS_Elections_gt = TS_Elections_mean,
+    
+    # NYT Pairs: Media (topic_norm) and GT (topic_mean)
+    NYT_AsiaGeopolitics_norm = AsiaGeopolitics_norm, NYT_AsiaGeopolitics_gt = NYT_AsiaGeopolitics_mean,
+    NYT_UkraineWar_norm = UkraineWar_norm.y, NYT_UkraineWar_gt = NYT_UkraineWar_mean,
+    NYT_CrimeJustice_norm = CrimeJustice_norm, NYT_CrimeJustice_gt = NYT_CrimeJustice_mean,
+    NYT_Accidents_norm = Accidents_norm.y, NYT_Accidents_gt = NYT_Accidents_mean,
+    NYT_SyriaPolitics_norm = SyriaMiddleEastPolitics_norm, NYT_SyriaPolitics_gt = NYT_SyriaMiddleEastPolitics_mean,
+    NYT_GlobalLeaders_norm = GlobalLeadersConflict_norm, NYT_GlobalLeaders_gt = NYT_GlobalLeaderConflict_mean,
+    NYT_EconomicCrisis_norm = EconomicPoliticalCrises_norm, NYT_EconomicCrisis_gt = NYT_EconomicPoliticalCrisis_mean,
+    NYT_IsraelGaza_norm = IsraelGazaConflict_norm.y, NYT_IsraelGaza_gt = NYT_IsraelGazaConflict_mean,
+    NYT_ReligionCulture_norm = ReligionCulture_norm, NYT_ReligionCulture_gt = NYT_ReligionCulture_mean
+  )
+
+# Save final result basis
+write.csv(Model_1_Result_Input, "Model_1_Result_Input.csv", row.names = FALSE)
+```
+
+## Merging Media Data (TS, NYT) and GT for Model 2
+
+Same approach as for Model 1 but for the STM with Covariates including the \_cov suffix
+
+```{r}
+#| label: Merge Media (STM Model 2) and GT
+
+# Merge Media Datasets (TS and NYT)
+# This creates .x (TS) and .y (NYT) suffixes for all duplicate topic names
+Model_2_Result_Input <- TS_Theta_Weekly_cov %>%
+  full_join(NYT_Theta_Weekly_cov, by = "week_start")
+
+# Join with GT Data
+Model_2_Result_Input <- Model_2_Result_Input %>%
+  left_join(GT_Data %>% rename(week_start = date), by = "week_start")
+
+# Select and pair matching variables (handling .x/.y for all 4 overlaps)
+Model_2_Result_Input <- Model_2_Result_Input %>%
+  select(
+    week_start,
+    
+    # TS Pairs: Media (topic_norm_cov) and GT (topic_mean)
+    TS_NaturalDisasters_norm_cov = NaturalDisasters_norm_cov, TS_NaturalDisasters_gt = TS_NaturalDisaster_mean,
+    TS_EUPolitics_norm_cov = EUPolitics_norm_cov, TS_EUPolitics_gt = TS_EUPolitics_mean,
+    TS_USPolitics_norm_cov = USPolitics_norm_cov, TS_USPolitics_gt = TS_USPolitics_mean,
+    TS_MilitaryGeopolitics_norm_cov = MilitaryGeopolitics_norm_cov, TS_MilitaryGeopolitics_gt = TS_MilitaryGeopolitics_mean,
+    TS_UkraineWar_norm_cov = UkraineWar_norm_cov.x, TS_UkraineWar_gt = TS_UkraineWar_mean,
+    TS_EURightwing_norm_cov = EURightwingPolitics_norm_cov, TS_EURightwing_gt = TS_EURightWing_mean,
+    TS_Diplomacy_norm_cov = Diplomacy_norm_cov.x, TS_Diplomacy_gt = TS_Diplomatie_mean,
+    TS_IsraelGaza_norm_cov = IsraelGazaConflict_norm_cov.x, TS_IsraelGaza_gt = TS_IsraelGazaConflict_mean,
+    TS_ClimateFires_norm_cov = FiresClimateDisasters_norm_cov, TS_ClimateFires_gt = TS_FiresClimateDisasters_mean,
+    TS_Accidents_norm_cov = Accidents_norm_cov.x, TS_Accidents_gt = TS_Accidents_mean,
+    TS_Elections_norm_cov = Elections_norm_cov, TS_Elections_gt = TS_Elections_mean,
+    
+    # NYT Pairs: Media (topic_norm_cov) and GT (topic_mean)
+    NYT_Diplomacy_norm_cov = Diplomacy_norm_cov.y, NYT_Diplomacy_gt = TS_Diplomatie_mean, # New overlap in M2
+    NYT_AsiaGeopolitics_norm_cov = AsiaGeopolitics_norm_cov, NYT_AsiaGeopolitics_gt = NYT_AsiaGeopolitics_mean,
+    NYT_UkraineWar_norm_cov = UkraineWar_norm_cov.y, NYT_UkraineWar_gt = NYT_UkraineWar_mean,
+    NYT_IntLawCourts_norm_cov = InternationalLawCourts_norm_cov, NYT_IntLawCourts_gt = NYT_CrimeJustice_mean,
+    NYT_CrimeJustice_norm_cov = CrimeJustice_norm_cov, NYT_CrimeJustice_gt = NYT_CrimeJustice_mean,
+    NYT_Accidents_norm_cov = Accidents_norm_cov.y, NYT_Accidents_gt = NYT_Accidents_mean,
+    NYT_SyriaPolitics_norm_cov = SyriaMiddleEastPolitics_norm_cov, NYT_SyriaPolitics_gt = NYT_SyriaMiddleEastPolitics_mean,
+    NYT_GlobalLeaders_norm_cov = GlobalLeadersConflict_norm_cov, NYT_GlobalLeaders_gt = NYT_GlobalLeaderConflict_mean,
+    NYT_EconomicCrisis_norm_cov = EconomicPoliticalCrises_norm_cov, NYT_EconomicCrisis_gt = NYT_EconomicPoliticalCrisis_mean,
+    NYT_IsraelGaza_norm_cov = IsraelGazaConflict_norm_cov.y, NYT_IsraelGaza_gt = NYT_IsraelGazaConflict_mean,
+    NYT_ReligionCulture_norm_cov = ReligionCulture_norm_cov, NYT_ReligionCulture_gt = NYT_ReligionCulture_mean,
+    NYT_Venezuela_norm_cov = Venezuela_norm_cov, NYT_Venezuela_gt = NYT_GlobalLeaderConflict_mean
+  )
+
+# Save final result basis
+write.csv(Model_2_Result_Input, "Model_2_Result_Input.csv", row.names = FALSE)
+```

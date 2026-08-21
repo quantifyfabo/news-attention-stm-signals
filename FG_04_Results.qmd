@@ -1,0 +1,2094 @@
+---
+title: "MT_04_Results"
+author: "Fabian Gienke"
+format: 
+  html:
+    toc: true           
+    code-fold: true     
+    code-summary: "Code anzeigen"
+    theme: cosmo
+execute:
+  cache: true           
+---
+
+## Results Overview
+
+The results are structured logically along the hypothesis. Plots and Tables are found in the section 4 Results and the Appendix in the Paper.
+
+First descriptive Statistics about the Dataset are implemented. Then\
+H1 (Correlations),\
+H2 (Media Storms, Topic Categories),\
+H3 (Time Lags, Granger),\
+are analysed. Finally Robustness checks with Model 2 are implemented.
+
+## R Packages
+
+This chunk loads all required R packages for data preperation, time-series analysis, and formatting plots and tables.
+
+```{r}
+# Load all packages
+library(tidyverse)
+library(dplyr)
+library(tidyr)
+library(gt)
+library(ggplot2)
+library(lubridate)
+library(vars)
+library(lmtest)
+library(tseries)
+library(knitr)
+library(xtable)
+
+```
+
+## Additional Data processing for Results
+
+This section imports the weekly aggregated model results for both Model 1 and Model 2, alongside the article-level datasets containing the dominant theta distributions. File Paths need to be changed accordingly.
+
+```{r}
+#| label: Add Data
+
+Model_1_Result_Input <- read.csv('/Model_1_Result_Input.csv')
+
+Model_2_Result_Input <- read.csv('/Model_2_Result_Input.csv')
+
+TS_Input_DominantTheta <- read.csv('/TS_Output.csv')
+
+NYT_Input_DominantTheta <- read.csv('/NYT_Output.csv')
+```
+
+# Descriptive Statistics
+
+## Overview Data: Media vs Public Table
+
+This code calculates the average normalized media attention and public interest for each topic and formats the output into a descriptive summary table. Plot Table with Average Media Attention (norm) vs Average Public Interest (norm)
+
+```{r}
+#| label: Plot Table with Average Media Attention (norm) vs Average Public Interest (norm)
+# 1. Summary for TS
+ts_summary <- Model_1_Result_Input %>%
+  summarise(across(starts_with("TS_") & contains("_norm"), mean, na.rm = TRUE),
+            across(starts_with("TS_") & contains("_gt"), mean, na.rm = TRUE)) %>%
+  pivot_longer(everything(), names_to = "key", values_to = "value") %>%
+  mutate(outlet = "Tagesschau",
+         topic = gsub("TS_|_norm|_gt", "", key),
+         type = ifelse(grepl("_norm", key), "avg_norm_theta", "avg_gt_score")) %>%
+  dplyr::select(-key) %>%
+  pivot_wider(names_from = type, values_from = value)
+
+# 2. Summary for NYT
+nyt_summary <- Model_1_Result_Input %>%
+  summarise(across(starts_with("NYT_") & contains("_norm"), mean, na.rm = TRUE),
+            across(starts_with("NYT_") & contains("_gt"), mean, na.rm = TRUE)) %>%
+  pivot_longer(everything(), names_to = "key", values_to = "value") %>%
+  mutate(outlet = "NYT",
+         topic = gsub("NYT_|_norm|_gt", "", key),
+         type = ifelse(grepl("_norm", key), "avg_norm_theta", "avg_gt_score")) %>%
+  dplyr::select(-key) %>%
+  pivot_wider(names_from = type, values_from = value)
+
+# 3. Combine and create HTML output
+final_table_html <- bind_rows(ts_summary, nyt_summary) %>%
+  arrange(outlet, desc(avg_norm_theta)) %>%
+  gt() %>%
+  tab_header(
+    title = "Descriptive Statistics: Model 1",
+    subtitle = "Comparison of Average Media Attention and Public Interest (GT)"
+  ) %>%
+  fmt_number(
+    columns = c(avg_norm_theta, avg_gt_score),
+    decimals = 2
+  ) %>%
+  cols_label(
+    topic = "Topic",
+    outlet = "Outlet",
+    avg_norm_theta = "Avg. Media Attention (Norm)",
+    avg_gt_score = "Avg. Public Interest (GT)"
+  ) %>%
+  tab_options(
+    table.width = pct(100)
+  )
+
+# Display table
+final_table_html
+gtsave(final_table_html, "Descriptive_Stats_Model_1.html")
+
+
+```
+
+## Standard Deviation
+
+This calculates the standard deviation for both the media and public datasets to measure and compare the overall volatility of each topic.
+
+```{r}
+#| label: SD Table
+# SD Summary for TS
+ts_sd_summary <- Model_1_Result_Input %>%
+  summarise(across(starts_with("TS_") & contains("_norm"), sd, na.rm = TRUE),
+            across(starts_with("TS_") & contains("_gt"), sd, na.rm = TRUE)) %>%
+  pivot_longer(everything(), names_to = "key", values_to = "value") %>%
+  mutate(outlet = "Tagesschau",
+         topic = gsub("TS_|_norm|_gt", "", key),
+         type = ifelse(grepl("_norm", key), "sd_norm_theta", "sd_gt_score")) %>%
+  dplyr::select(-key) %>%
+  pivot_wider(names_from = type, values_from = value)
+
+# SD Summary for NYT
+nyt_sd_summary <- Model_1_Result_Input %>%
+  summarise(across(starts_with("NYT_") & contains("_norm"), sd, na.rm = TRUE),
+            across(starts_with("NYT_") & contains("_gt"), sd, na.rm = TRUE)) %>%
+  pivot_longer(everything(), names_to = "key", values_to = "value") %>%
+  mutate(outlet = "NYT",
+         topic = gsub("NYT_|_norm|_gt", "", key),
+         type = ifelse(grepl("_norm", key), "sd_norm_theta", "sd_gt_score")) %>%
+  dplyr::select(-key) %>%
+  pivot_wider(names_from = type, values_from = value)
+
+# Combine and create HTML output
+sd_table_html <- bind_rows(ts_sd_summary, nyt_sd_summary) %>%
+  arrange(outlet, desc(sd_norm_theta)) %>%
+  gt() %>%
+  tab_header(
+    title = "Descriptive Statistics: Model 1 (Standard Deviation)",
+    subtitle = "Volatility Comparison of Media Attention and Public Interest (GT)"
+  ) %>%
+  fmt_number(
+    columns = c(sd_norm_theta, sd_gt_score),
+    decimals = 2
+  ) %>%
+  cols_label(
+    topic = "Topic",
+    outlet = "Outlet",
+    sd_norm_theta = "SD Media Attention",
+    sd_gt_score = "SD Public Interest (GT)"
+  ) %>%
+  tab_options(
+    table.width = pct(100)
+  )
+
+# Display and save
+sd_table_html
+gtsave(sd_table_html, "SD_Stats_Model_1.html")
+```
+
+## Summary Table for descriptive stats
+
+This script aggregates article counts, weekly averages, and maximum search interest to create a comprehensive descriptive Latex table for the dataset.
+
+```{r}
+#| label: Summary Descriptive Stats Table
+
+
+# compute metrics from weekly aggregated data
+get_weekly_metrics <- function(data, outlet) {
+  # identify media columns ending in _norm
+  cols <- names(data)[grep(paste0("^", outlet, "_.*_norm$"), names(data))]
+  
+  map_dfr(cols, function(c) {
+    topic <- gsub(paste0("^", outlet, "_|_norm$"), "", c)
+    # identify corresponding google trends column
+    gt_col <- paste0(outlet, "_", topic, "_gt")
+    
+    if(gt_col %in% names(data)) {
+      tibble(
+        Outlet = outlet,
+        Topic = topic,
+        `Avg Theta` = mean(data[[c]], na.rm = TRUE),
+        `Avg GT` = mean(data[[gt_col]], na.rm = TRUE),
+        `Max GT` = max(data[[gt_col]], na.rm = TRUE)
+      )
+    }
+  })
+}
+
+# aggregate weekly stats for both outlets
+weekly_summary <- bind_rows(
+  get_weekly_metrics(Model_1_Result_Input, "TS"),
+  get_weekly_metrics(Model_1_Result_Input, "NYT")
+)
+
+# combine document level data for article counts
+all_docs <- bind_rows(
+  TS_Input_DominantTheta %>% mutate(Outlet = "TS"),
+  NYT_Input_DominantTheta %>% mutate(Outlet = "NYT")
+)
+
+# calculate total articles per outlet for share calculation
+outlet_totals <- all_docs %>%
+  group_by(Outlet) %>%
+  summarise(total = n())
+
+# calculate article counts and shares per topic
+topic_counts <- all_docs %>%
+  filter(topic_label_clean != "else") %>%
+  mutate(
+    # align names with weekly data structure
+    raw_label = gsub("[^A-Za-z0-9]", "", topic_label_clean),
+    Topic = case_when(
+      raw_label == "EURightwingPolitics" ~ "EURightwing",
+      raw_label == "IsraelGazaConflict" ~ "IsraelGaza",
+      raw_label == "FiresClimateDisasters" ~ "ClimateFires",
+      raw_label == "SyriaMiddleEastPolitics" ~ "SyriaPolitics",
+      raw_label == "GlobalLeadersConflict" ~ "GlobalLeaders",
+      raw_label == "EconomicPoliticalCrises" ~ "EconomicCrisis",
+      TRUE ~ raw_label
+    )
+  ) %>%
+  group_by(Outlet, Topic) %>%
+  summarise(n = n(), .groups = "drop") %>%
+  left_join(outlet_totals, by = "Outlet") %>%
+  mutate(share = (n / total) * 100) %>%
+  dplyr::select(Outlet, Topic, `N Articles` = n, `% Articles` = share)
+
+# join counts with weekly averages and max values
+final_desc_table <- topic_counts %>%
+  inner_join(weekly_summary, by = c("Outlet", "Topic")) %>%
+  arrange(Outlet, desc(`N Articles`))
+
+# generate latex table output
+kable_table <- kable(final_desc_table, format = "latex", booktabs = TRUE, 
+      digits = c(0, 0, 0, 1, 2, 2, 2),
+      col.names = c("Outlet", "Topic", "N Articles", "% Articles", "Avg $\\theta$ (norm.)", "Avg GT", "Max GT"))
+
+# print result to console
+cat(kable_table, sep = "\n")
+```
+
+## Dominant Theta vs. Aggregated Approach
+
+This compares the sheer number of articles assigned to each topic against their aggregated theta probability sum to validate the structural topic classification.
+
+```{r}
+#| label: dominant theta vs aggregated theta
+
+# combine document level datasets for both outlets
+all_docs <- bind_rows(
+  TS_Input_DominantTheta %>% mutate(Outlet = "TS"),
+  NYT_Input_DominantTheta %>% mutate(Outlet = "NYT")
+)
+
+# calculate total articles and total theta sum per outlet
+outlet_totals <- all_docs %>%
+  group_by(Outlet) %>%
+  summarise(
+    total_n = n(),
+    total_theta = sum(dominant_theta, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# calculate article counts and theta sums per topic
+final_desc_table <- all_docs %>%
+  filter(topic_label_clean != "else") %>%
+  mutate(
+    # clean topic labels to match papers naming convention
+    raw_label = gsub("[^A-Za-z0-9]", "", topic_label_clean),
+    Topic = case_when(
+      raw_label == "EURightwingPolitics" ~ "EURightwing",
+      raw_label == "IsraelGazaConflict" ~ "IsraelGaza",
+      raw_label == "FiresClimateDisasters" ~ "ClimateFires",
+      raw_label == "SyriaMiddleEastPolitics" ~ "SyriaPolitics",
+      raw_label == "GlobalLeadersConflict" ~ "GlobalLeaders",
+      raw_label == "EconomicPoliticalCrises" ~ "EconomicCrisis",
+      TRUE ~ raw_label
+    )
+  ) %>%
+  group_by(Outlet, Topic) %>%
+  summarise(
+    n_articles = n(),
+    theta_sum = sum(dominant_theta, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  # merge with outlet totals to compute shares
+  left_join(outlet_totals, by = "Outlet") %>%
+  mutate(
+    perc_articles = (n_articles / total_n) * 100,
+    perc_theta = (theta_sum / total_theta) * 100
+  ) %>%
+  # select and rename columns for final output
+  dplyr::select(Outlet, Topic, `N Articles` = n_articles, `% Articles` = perc_articles, 
+                `Theta Sum` = theta_sum, `% Theta Share` = perc_theta) %>%
+  arrange(Outlet, desc(`N Articles`))
+
+# generate latex table
+kable_table <- kable(final_desc_table, format = "latex", booktabs = TRUE, 
+      digits = c(0, 0, 0, 1, 1, 1),
+      col.names = c("Outlet", "Topic", "N Articles", "% Articles", "Theta Sum", "% Theta Share"))
+
+# print latex code to console
+cat(kable_table, sep = "\n")
+
+```
+
+## H1 - Media Storm Plot
+
+This code detects media storms using the thresholds (entry $> 2\sigma$, exit $< 1\sigma$) and visualizes these storm phases with yellow highlights in the time series.
+
+```{r}
+#| label: Media Storms and Plot
+
+# create object to call function
+plot_storm_series <- function(data, outlet_prefix) {
+  
+  # Identify Cols
+  media_cols <- names(data)[grep(paste0("^", outlet_prefix, "_.*_norm$"), names(data))]
+  
+  # Create Data in Long Format for Plot
+  long_data <- data %>%
+    dplyr::select(week_start, all_of(media_cols)) %>%
+    pivot_longer(-week_start, names_to = "key", values_to = "Intensity") %>%
+    mutate(
+      Topic = gsub(paste0("^", outlet_prefix, "_|_norm$"), "", key),
+      week_start = as.Date(week_start)
+    ) %>%
+    group_by(Topic) %>%
+    mutate(
+      # Define Tresholds
+      avg_val = mean(Intensity, na.rm = TRUE),
+      sd_val = sd(Intensity, na.rm = TRUE),
+      thresh_2sd = avg_val + (2 * sd_val), # Start-Schwelle
+      thresh_1sd = avg_val + (1 * sd_val)  # Ende-Schwelle
+    )
+  
+  # Apply Media Storm Conditions
+  long_data <- long_data %>%
+    group_split() %>%
+    map_dfr(function(df_topic) {
+      in_storm <- logical(nrow(df_topic))
+      current_state <- FALSE
+      
+      for(i in 1:nrow(df_topic)) {
+        val <- df_topic$Intensity[i]
+        if(!is.na(val)) {
+          if(!current_state) {
+            if(val > df_topic$thresh_2sd[i]) current_state <- TRUE
+          } else {
+            if(val < df_topic$thresh_1sd[i]) current_state <- FALSE
+          }
+        }
+        in_storm[i] <- current_state
+      }
+      df_topic$is_storm <- in_storm
+      return(df_topic)
+    })
+  
+  # Red Lines for Tresholds and mean
+  threshold_lines <- long_data %>%
+    group_by(Topic) %>%
+    summarise(
+      Mean = first(avg_val),
+      SD1 = first(thresh_1sd),
+      SD2 = first(thresh_2sd),
+      .groups = "drop"
+    )
+  
+  # Highlight Storm Phases
+  storm_highlights <- long_data %>%
+    filter(is_storm == TRUE) %>%
+    group_by(Topic, grp = cumsum(c(1, diff(week_start) > 7))) %>%
+    summarise(xmin = min(week_start) - 3.5, xmax = max(week_start) + 3.5, .groups = "drop")
+  
+  # Plotting
+  ggplot(long_data, aes(x = week_start, y = Intensity)) +
+    geom_rect(data = storm_highlights, 
+              aes(xmin = xmin, xmax = xmax, ymin = 0, ymax = 100), 
+              fill = "yellow", alpha = 0.3, inherit.aes = FALSE) +
+    geom_hline(data = threshold_lines, aes(yintercept = Mean), color = "red", linetype = "dotted", alpha = 0.7) +
+    geom_hline(data = threshold_lines, aes(yintercept = SD1), color = "red", linetype = "dashed", alpha = 0.7) +
+    geom_hline(data = threshold_lines, aes(yintercept = SD2), color = "red", linetype = "solid", alpha = 0.8) +
+    geom_line(color = "#003366", linewidth = 0.5) +
+    facet_wrap(~Topic, ncol = 3, scales = "free_y") +
+    scale_y_continuous(limits = c(0, 100), breaks = seq(0, 100, 50)) +
+    scale_x_date(date_labels = "%b %y", date_breaks = "6 months") +
+    labs(
+      title = paste("Thematic Dynamics & Media Storms:", outlet_prefix),
+      subtitle = "Solid red: Mean+2SD (Entry) | Dashed: Mean+1SD (Exit) | Dotted: Mean",
+      x = "Time (Weekly)",
+      y = "Intensity (0-100)",
+      caption = "Hysteresis detection: Start > 2SD, End < 1SD[cite: 1]"
+    ) +
+    theme_minimal(base_size = 9) +
+    theme(
+      strip.text = element_text(face = "bold"),
+      panel.grid.minor = element_blank(),
+      axis.text.x = element_text(angle = 45, hjust = 1)
+    )
+}
+
+# Create Plots
+storm_plot_ts <- plot_storm_series(Model_1_Result_Input, "TS")
+storm_plot_nyt <- plot_storm_series(Model_1_Result_Input, "NYT")
+
+print(storm_plot_ts)
+print(storm_plot_nyt)
+
+```
+
+## Output Table for Media Storms
+
+This extracts the mathematically identified media storms and generates Latex tables detailing the total storm count, average duration, and maximum peak for each topic.
+
+```{r}
+#| label: Media Storm Table
+
+# H1 - Media Storms
+
+# function for plots
+plot_storm_series <- function(data, outlet_prefix) {
+  
+  # identify cols
+  media_cols <- names(data)[grep(paste0("^", outlet_prefix, "_.*_norm$"), names(data))]
+  
+  # create long data
+  long_data <- data %>%
+    dplyr::select(week_start, all_of(media_cols)) %>%
+    pivot_longer(-week_start, names_to = "key", values_to = "Intensity") %>%
+    mutate(
+      Topic = gsub(paste0("^", outlet_prefix, "_|_norm$"), "", key),
+      week_start = as.Date(week_start)
+    ) %>%
+    group_by(Topic) %>%
+    mutate(
+      avg_val = mean(Intensity, na.rm = TRUE),
+      sd_val = sd(Intensity, na.rm = TRUE),
+      thresh_2sd = avg_val + (2 * sd_val),
+      thresh_1sd = avg_val + (1 * sd_val)
+    )
+  
+  # apply identical storm logic
+  long_data <- long_data %>%
+    group_split() %>%
+    map_dfr(function(df_topic) {
+      
+      in_storm <- logical(nrow(df_topic))
+      current_state <- FALSE
+      
+      for(i in 1:nrow(df_topic)) {
+        
+        val <- df_topic$Intensity[i]
+        
+        if(!is.na(val)) {
+          
+          if(!current_state) {
+            
+            if(val > df_topic$thresh_2sd[i]) {
+              current_state <- TRUE
+            }
+            
+          } else {
+            
+            if(val < df_topic$thresh_1sd[i]) {
+              current_state <- FALSE
+            }
+          }
+        }
+        
+        in_storm[i] <- current_state
+      }
+      
+      df_topic$is_storm <- in_storm
+      
+      return(df_topic)
+    })
+  
+  # threshold lines
+  threshold_lines <- long_data %>%
+    group_by(Topic) %>%
+    summarise(
+      Mean = first(avg_val),
+      SD1 = first(thresh_1sd),
+      SD2 = first(thresh_2sd),
+      .groups = "drop"
+    )
+  
+  # highlight storm phases
+  storm_highlights <- long_data %>%
+    filter(is_storm == TRUE) %>%
+    group_by(Topic, grp = cumsum(c(1, diff(week_start) > 7))) %>%
+    summarise(
+      xmin = min(week_start) - 3.5,
+      xmax = max(week_start) + 3.5,
+      .groups = "drop"
+    )
+  
+  # plot
+  ggplot(long_data, aes(x = week_start, y = Intensity)) +
+    geom_rect(
+      data = storm_highlights,
+      aes(xmin = xmin, xmax = xmax, ymin = 0, ymax = 100),
+      fill = "yellow",
+      alpha = 0.3,
+      inherit.aes = FALSE
+    ) +
+    geom_hline(
+      data = threshold_lines,
+      aes(yintercept = Mean),
+      color = "red",
+      linetype = "dotted",
+      alpha = 0.7
+    ) +
+    geom_hline(
+      data = threshold_lines,
+      aes(yintercept = SD1),
+      color = "red",
+      linetype = "dashed",
+      alpha = 0.7
+    ) +
+    geom_hline(
+      data = threshold_lines,
+      aes(yintercept = SD2),
+      color = "red",
+      linetype = "solid",
+      alpha = 0.8
+    ) +
+    geom_line(color = "#003366", linewidth = 0.5) +
+    facet_wrap(~Topic, ncol = 3, scales = "free_y") +
+    scale_y_continuous(limits = c(0, 100), breaks = seq(0, 100, 50)) +
+    scale_x_date(date_labels = "%b %y", date_breaks = "6 months") +
+    labs(
+      title = paste("Thematic Dynamics & Media Storms:", outlet_prefix),
+      subtitle = "Solid red: Mean+2SD (Entry) | Dashed: Mean+1SD (Exit) | Dotted: Mean",
+      x = "Time (Weekly)",
+      y = "Intensity (0-100)",
+      caption = "Hysteresis detection: Start > 2SD, End < 1SD"
+    ) +
+    theme_minimal(base_size = 9) +
+    theme(
+      strip.text = element_text(face = "bold"),
+      panel.grid.minor = element_blank(),
+      axis.text.x = element_text(angle = 45, hjust = 1)
+    )
+}
+
+# function for storm summary tables
+create_storm_table <- function(data, outlet_prefix) {
+  
+  # identify cols
+  media_cols <- names(data)[grep(paste0("^", outlet_prefix, "_.*_norm$"), names(data))]
+  
+  # create long data
+  long_data <- data %>%
+    dplyr::select(week_start, all_of(media_cols)) %>%
+    pivot_longer(-week_start, names_to = "key", values_to = "Intensity") %>%
+    mutate(
+      Topic = gsub(paste0("^", outlet_prefix, "_|_norm$"), "", key),
+      week_start = as.Date(week_start)
+    ) %>%
+    group_by(Topic) %>%
+    mutate(
+      avg_val = mean(Intensity, na.rm = TRUE),
+      sd_val = sd(Intensity, na.rm = TRUE),
+      thresh_2sd = avg_val + (2 * sd_val),
+      thresh_1sd = avg_val + (1 * sd_val)
+    )
+  
+  # apply identical storm logic
+  long_data <- long_data %>%
+    group_split() %>%
+    map_dfr(function(df_topic) {
+      
+      in_storm <- logical(nrow(df_topic))
+      current_state <- FALSE
+      
+      for(i in 1:nrow(df_topic)) {
+        
+        val <- df_topic$Intensity[i]
+        
+        if(!is.na(val)) {
+          
+          if(!current_state) {
+            
+            if(val > df_topic$thresh_2sd[i]) {
+              current_state <- TRUE
+            }
+            
+          } else {
+            
+            if(val < df_topic$thresh_1sd[i]) {
+              current_state <- FALSE
+            }
+          }
+        }
+        
+        in_storm[i] <- current_state
+      }
+      
+      df_topic$is_storm <- in_storm
+      
+      return(df_topic)
+    })
+  
+  # create storm ids
+  storm_data <- long_data %>%
+    group_by(Topic) %>%
+    arrange(week_start) %>%
+    mutate(
+      storm_start = is_storm & !lag(is_storm, default = FALSE),
+      storm_id = cumsum(storm_start)
+    ) %>%
+    ungroup()
+  
+  # calculate storm statistics
+  storm_summary <- storm_data %>%
+    filter(is_storm == TRUE) %>%
+    group_by(Topic, storm_id) %>%
+    summarise(
+      duration_weeks = n(),
+      peak_intensity = max(Intensity, na.rm = TRUE),
+      peak_sd_above_mean = max((Intensity - avg_val) / sd_val, na.rm = TRUE),
+      .groups = "drop"
+    ) %>%
+    group_by(Topic) %>%
+    summarise(
+      number_storms = n(),
+      average_duration = round(mean(duration_weeks), 2),
+      maximum_peak_sd = round(max(peak_sd_above_mean), 2),
+      .groups = "drop"
+    ) %>%
+    arrange(desc(number_storms))
+  
+  return(storm_summary)
+}
+
+# create plots
+storm_plot_ts <- plot_storm_series(Model_1_Result_Input, "TS")
+storm_plot_nyt <- plot_storm_series(Model_1_Result_Input, "NYT")
+
+print(storm_plot_ts)
+print(storm_plot_nyt)
+
+# create tables
+storm_table_ts <- create_storm_table(Model_1_Result_Input, "TS")
+storm_table_nyt <- create_storm_table(Model_1_Result_Input, "NYT")
+
+# latex tables
+library(xtable)
+
+xtable(
+  storm_table_ts,
+  caption = "Media Storm Characteristics for Tagesschau Topics",
+  label = "tab:storm_ts"
+)
+
+xtable(
+  storm_table_nyt,
+  caption = "Media Storm Characteristics for New York Times Topics",
+  label = "tab:storm_nyt"
+)
+
+# print latex code
+print(
+  xtable(
+    storm_table_ts,
+    caption = "Media Storm Characteristics for Tagesschau Topics",
+    label = "tab:storm_ts"
+  ),
+  include.rownames = FALSE,
+  booktabs = TRUE
+)
+
+print(
+  xtable(
+    storm_table_nyt,
+    caption = "Media Storm Characteristics for New York Times Topics",
+    label = "tab:storm_nyt"
+  ),
+  include.rownames = FALSE,
+  booktabs = TRUE
+)
+
+
+```
+
+## Aggregated Plot of Media Attention
+
+This visualizes the overall corpus volatility by plotting the total weekly volume of labeled topic articles against the unclassified "else" category.
+
+```{r}
+#| label: Combined Time Series Plot
+
+
+# create function to aggregate data weekly
+get_corpus_volatility <- function(data, outlet_name) {
+  
+  # user specific sunday-week-start logic to match GT
+  get_sunday <- function(x) { x - wday(x, week_start = 1) %% 7 }
+  
+  data %>%
+    mutate(
+      week_start = get_sunday(as.Date(date)),
+      # categorize into labeled (signal) and else (noise)
+      category = ifelse(topic_label_clean == "else", "Else Topics", "Labeled Topics")
+    ) %>%
+    group_by(week_start, category) %>%
+    summarise(count = n(), .groups = "drop") %>%
+    pivot_wider(names_from = category, values_from = count, values_fill = 0) %>%
+    mutate(
+      `All Topics (Total Volume)` = `Labeled Topics` + `Else Topics`,
+      Outlet = outlet_name
+    ) %>%
+    # transform back to long format for ggplot
+    pivot_longer(
+      cols = c(`All Topics (Total Volume)`, `Labeled Topics`, `Else Topics`),
+      names_to = "Series",
+      values_to = "Volume"
+    )
+}
+
+# apply function to both outlets
+volatility_ts <- get_corpus_volatility(TS_Input_DominantTheta, "TS")
+volatility_nyt <- get_corpus_volatility(NYT_Input_DominantTheta, "NYT")
+
+# combine data
+volatility_data <- bind_rows(volatility_ts, volatility_nyt)
+
+# order factors so total volume is plotted distinctly in legend
+volatility_data$Series <- factor(
+  volatility_data$Series,
+  levels = c("All Topics (Total Volume)", "Labeled Topics", "Else Topics")
+)
+
+# create professional plot
+corpus_plot <- ggplot(volatility_data, aes(x = week_start, y = Volume, color = Series, linetype = Series)) +
+  geom_line(linewidth = 0.8) +
+  facet_wrap(~Outlet, scales = "free_y", ncol = 2) +
+  # updated color scheme: Green, Blue, Gray
+  scale_color_manual(values = c(
+    "All Topics (Total Volume)" = "#2E8B57", # Grün (SeaGreen)
+    "Labeled Topics"            = "#003366", # Dunkelblau
+    "Else Topics"               = "#999999"  # Grau
+  )) +
+  scale_linetype_manual(values = c(
+    "All Topics (Total Volume)" = "dashed",
+    "Labeled Topics" = "solid",
+    "Else Topics" = "solid"
+  )) +
+  scale_y_continuous(limits = c(0, NA)) +
+  scale_x_date(date_labels = "%b %y", date_breaks = "3 months") +
+  labs(
+    title = "Total Corpus Volatility: Signal vs. Noise",
+    subtitle = "Weekly article volume of labeled topics versus unclassified (else) topics",
+    x = "Time (Weekly)",
+    y = "N Articles per Week",
+    color = "Classification",
+    linetype = "Classification"
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(
+    legend.position = "bottom",
+    strip.text = element_text(face = "bold", size = 12),
+    panel.grid.minor = element_blank(),
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+
+# print and save plot
+print(corpus_plot)
+ggsave("Corpus_Volatility_Overview.pdf", corpus_plot, width = 20, height = 10, units = "cm")
+```
+
+## Combined Table of Media Attention Variance - full Corpus
+
+This calculates summary statistics like the mean, standard deviation, and maximum peaks for the total weekly article volume across both outlets.
+
+```{r}
+# calculate summary statistics based on the existing volatility_data object
+volatility_summary <- volatility_data %>%
+  group_by(Outlet, Series) %>%
+  summarise(
+    `Total Articles` = sum(Volume, na.rm = TRUE),
+    `Mean (Weekly)` = mean(Volume, na.rm = TRUE),
+    `SD (Weekly)` = sd(Volume, na.rm = TRUE),
+    `Max Peak` = max(Volume, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  # sort by outlet and the predefined factor levels of Series
+  arrange(Outlet, Series)
+
+# generate latex table output
+kable_volatility <- knitr::kable(
+  volatility_summary, 
+  format = "latex", 
+  booktabs = TRUE, 
+  digits = c(0, 0, 0, 1, 2, 0), # 1 decimal for mean, 2 for SD
+  col.names = c("Outlet", "Classification", "Total Articles", "Mean (Weekly)", "SD", "Max Peak")
+)
+
+# print result to console
+cat(kable_volatility, sep = "\n")
+```
+
+# H2 - Correlations
+
+## Plot Time Series of Media and GT per topic
+
+This function creates line plots to visually compare the normalized media coverage and Google Trends scores for specific individual topics. (Individual Time Series Plot)
+
+```{r}
+#| label: Plot per Topic of Time Series (Media and GT)
+Model_1_Result_Input$week_start <- as.Date(Model_1_Result_Input$week_start)
+
+plot_topic_comparison <- function(data, outlet, topic_name) {
+  
+  media_col <- paste0(outlet, "_", topic_name, "_norm")
+  gt_col    <- paste0(outlet, "_", topic_name, "_gt")
+  
+  plot_data <- data %>%
+    dplyr::select(week_start, all_of(media_col), all_of(gt_col)) %>%
+    pivot_longer(cols = -week_start, names_to = "Series", values_to = "Score") %>%
+    mutate(Series = ifelse(grepl("_norm", Series), "Media Attention", "Public Interest (GT)"))
+  
+  p <- ggplot(plot_data, aes(x = week_start, y = Score, color = Series)) +
+    geom_line(linewidth = 0.8) +
+    scale_color_manual(values = c("Media Attention" = "#003366", "Public Interest (GT)" = "#E69F00")) +
+    scale_y_continuous(limits = c(0, 100), breaks = seq(0, 100, 20)) +
+    scale_x_date(date_labels = "%b %Y", date_breaks = "3 months") +
+    labs(
+      title = paste("Topic:", topic_name, "(", outlet, ")"),
+      subtitle = "Comparison of Normalized Media Coverage and Google Search Volume",
+      x = "Time (Weekly)",
+      y = "Normalized Score (0-100)",
+      color = ""
+    ) +
+    theme_minimal() +
+    theme(
+      legend.position = "bottom",
+      plot.title = element_text(face = "bold", size = 14),
+      panel.grid.minor = element_blank(),
+      axis.text.x = element_text(angle = 45, hjust = 1)
+    )
+  
+  return(p)
+}
+
+p_ukraine <- plot_topic_comparison(Model_1_Result_Input, "TS", "UkraineWar")
+
+# Display plot
+print(p_ukraine)
+
+ggsave("Plot_TS_UkraineWar.pdf", p_ukraine, width = 16, height = 9, units = "cm")
+
+```
+
+## Facet Plots
+
+This creates large grid visualizations containing the time series of media attention and public interest for all topics simultaneously as facet plots.
+
+```{r}
+
+
+# Define function for faceted outlet overview
+plot_outlet_grid <- function(data, outlet_prefix) {
+  
+  # Reshape data to long format for ggplot
+  plot_data <- data %>%
+    dplyr::select(week_start, starts_with(paste0(outlet_prefix, "_"))) %>%
+    pivot_longer(-week_start, names_to = "key", values_to = "value") %>%
+    mutate(
+      # Extract clean topic names by removing prefix and suffix
+      topic = gsub(paste0("^", outlet_prefix, "_|(_norm|_gt)$"), "", key),
+      # Assign readable labels to series types
+      type = ifelse(grepl("_norm", key), "Media Attention", "Public Interest (GT)")
+    )
+
+  ggplot(plot_data, aes(x = as.Date(week_start), y = value, color = type)) +
+    geom_hline(yintercept = 0, color = "black", linewidth = 0.4) +
+    geom_line(linewidth = 0.6) +
+    facet_wrap(~topic, ncol = 3, scales = "fixed") + 
+    scale_color_manual(values = c("Media Attention" = "#003366", "Public Interest (GT)" = "#E69F00")) +
+    scale_y_continuous(limits = c(0, 100), breaks = seq(0, 100, 50)) +
+    scale_x_date(date_labels = "%y", date_breaks = "1 year") +
+    labs(
+      title = paste("Topic Comparison:", outlet_prefix),
+      subtitle = "Time-series of Media Attention vs. Google Trends (2024-2025)",
+      x = "Year",
+      y = "Normalized Score (0-100)",
+      color = ""
+    ) +
+    theme_minimal(base_size = 10) +
+    theme(
+      legend.position = "bottom",
+      strip.text = element_text(face = "bold"),
+      panel.spacing = unit(1, "lines"),
+      panel.grid.minor = element_blank(),
+      axis.text.x = element_text(angle = 0)
+    )
+}
+
+# Generate grids for both outlets
+grid_ts <- plot_outlet_grid(Model_1_Result_Input, "TS")
+grid_nyt <- plot_outlet_grid(Model_1_Result_Input, "NYT")
+
+# Save as PDF with A4-optimized dimensions
+ggsave("Grid_TS_All_Topics.pdf", grid_ts, width = 18, height = 22, units = "cm")
+ggsave("Grid_NYT_All_Topics.pdf", grid_nyt, width = 18, height = 20, units = "cm")
+```
+
+```{r}
+# Safe as pdf
+ggsave("Grid_TS_All_Topics.png", 
+       grid_ts, 
+       width = 18, 
+       height = 22, 
+       units = "cm", 
+       dpi = 600,
+       bg = "white")     
+```
+
+## Heatmap
+
+This computes Pearson's correlation coefficients between media and public interest and visualizes the strength of these relationships as a color-coded heatmap.
+
+```{r}
+#| label: heatmap
+# Calculate correlations between media and public interest per topic
+calculate_correlations <- function(data, outlet_prefix) {
+  
+  # Identify all unique topics for the given outlet
+  cols <- names(data)[grep(paste0("^", outlet_prefix, "_.*_norm$"), names(data))]
+  topics <- gsub(paste0("^", outlet_prefix, "_|_norm$"), "", cols)
+  
+  # Loop through topics and compute Pearson correlation
+  cor_results <- lapply(topics, function(t) {
+    media_val <- data[[paste0(outlet_prefix, "_", t, "_norm")]]
+    public_val <- data[[paste0(outlet_prefix, "_", t, "_gt")]]
+    
+    correlation <- cor(media_val, public_val, use = "complete.obs", method = "pearson")
+    data.frame(outlet = outlet_prefix, topic = t, r = correlation)
+  })
+  
+  bind_rows(cor_results)
+}
+
+# Combine results for both outlets
+cor_data <- bind_rows(
+  calculate_correlations(Model_1_Result_Input, "TS"),
+  calculate_correlations(Model_1_Result_Input, "NYT")
+)
+
+# Create professional heatmap
+heatmap_plot <- ggplot(cor_data, aes(x = outlet, y = reorder(topic, r), fill = r)) +
+  geom_tile(color = "white", linewidth = 0.5) +
+  # Use a professional blue-white-red or single hue gradient
+  scale_fill_gradientn(
+    colors = c("#f7fbff", "#6baed6", "#08306b"), 
+    limits = c(0, 1),
+    name = "Pearson's r"
+  ) +
+  # Add correlation coefficients as text inside tiles
+  geom_text(aes(label = sprintf("%.2f", r)), color = ifelse(cor_data$r > 0.6, "white", "black"), size = 4) +
+  labs(
+    title = "Correlation: Media Attention vs. Public Interest",
+    subtitle = "Pearson correlation coefficients per topic and outlet (Model 1)",
+    x = "Media Outlet",
+    y = "Topic",
+    caption = "Source: STM Output & Google Trends Data"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold"),
+    axis.title = element_text(face = "bold"),
+    panel.grid = element_blank(),
+    legend.position = "right"
+  )
+
+# Display and save as PDF
+print(heatmap_plot)
+ggsave("Correlation_Heatmap_Model1.pdf", heatmap_plot, width = 18, height = 18, units = "cm")
+```
+
+## Correlation with p values table
+
+This script calculates the exact Pearson's correlations alongside their exact p-values, adding singificance stars to generate a formatted statistical table.
+
+```{r}
+
+# Function to calculate correlation and significance per topic
+get_cor_stats <- function(data, outlet_prefix) {
+  
+  # Identify topics based on column naming convention
+  cols <- names(data)[grep(paste0("^", outlet_prefix, "_.*_norm$"), names(data))]
+  topics <- gsub(paste0("^", outlet_prefix, "_|_norm$"), "", cols)
+  
+  # Map results
+  results <- lapply(topics, function(t) {
+    m_val <- data[[paste0(outlet_prefix, "_", t, "_norm")]]
+    p_val <- data[[paste0(outlet_prefix, "_", t, "_gt")]]
+    
+    # Perform Pearson correlation test
+    test <- cor.test(m_val, p_val, method = "pearson", use = "complete.obs")
+    
+    # Extract values
+    r_val <- test$estimate
+    p_stat <- test$p.value
+    
+    # Define significance stars
+    stars <- case_when(
+      p_stat < 0.001 ~ "***",
+      p_stat < 0.01  ~ "**",
+      p_stat < 0.05  ~ "*",
+      TRUE           ~ ""
+    )
+    
+    data.frame(
+      Outlet = outlet_prefix,
+      Topic = t,
+      r = r_val,
+      p_value = p_stat,
+      sig = stars,
+      display_r = paste0(sprintf("%.2f", r_val), stars)
+    )
+  })
+  
+  bind_rows(results)
+}
+
+# Generate full stats table
+cor_summary_table <- bind_rows(
+  get_cor_stats(Model_1_Result_Input, "TS"),
+  get_cor_stats(Model_1_Result_Input, "NYT")
+) %>%
+  arrange(desc(r))
+
+# Create professional gt table for display/export
+final_table_gt <- cor_summary_table %>%
+  dplyr::select(Outlet, Topic, r, p_value, display_r) %>%
+  gt() %>%
+  tab_header(
+    title = "Correlation Table: Media Attention vs. Public Interest",
+    subtitle = "Statistical significance of thematic synchronicity (Pearson's r)"
+  ) %>%
+  cols_label(
+    r = "Pearson's r",
+    p_value = "p-value",
+    display_r = "Correlation (sig.)"
+  ) %>%
+  fmt_number(columns = c(r, p_value), decimals = 3) %>%
+  tab_source_note(
+    source_note = "Significance levels: ***p < 0.001; **p < 0.01; *p < 0.05"
+  ) %>%
+  tab_options(
+    table.width = pct(100),
+    column_labels.font.weight = "bold"
+  )
+
+# Show and save
+final_table_gt
+gtsave(final_table_gt, "Correlation_Stats_Model_1.html")
+gtsave(final_table_gt, "Correlation_Stats_Model_1.pdf")
+```
+
+## Plot Single Topic Israel Gaza (TS)
+
+This generates a single, high-contrast time-series plot specifically for the Israel & Gaza topic to serve as a detailed visual example in the main text.
+
+```{r}
+#| label: Plot Single Topic Israel Gaza (TS)
+
+Model_1_Result_Input$week_start <- as.Date(Model_1_Result_Input$week_start)
+
+outlet_name <- "TS"
+topic_name  <- "IsraelGaza" 
+
+media_col <- paste0(outlet_name, "_", topic_name, "_norm")
+gt_col    <- paste0(outlet_name, "_", topic_name, "_gt")
+
+plot_data_single <- Model_1_Result_Input %>%
+  dplyr::select(week_start, all_of(media_col), all_of(gt_col)) %>%
+  pivot_longer(cols = -week_start, names_to = "Series", values_to = "Score") %>%
+  mutate(Series = ifelse(grepl("_norm", Series), "Media Attention", "Public Interest (GT)"))
+
+p_israel_gaza <- ggplot(plot_data_single, aes(x = week_start, y = Score, color = Series)) +
+  geom_line(linewidth = 0.8) +
+  scale_color_manual(values = c("Media Attention" = "#003366", "Public Interest (GT)" = "#E69F00")) +
+  scale_y_continuous(limits = c(0, 100), breaks = seq(0, 100, 20)) +
+  scale_x_date(date_labels = "%b %Y", date_breaks = "3 months") +
+  labs(
+    title = "Time Series: Israel & Gaza (TS)",
+    subtitle = "Comparison of Media Attention and Public Interest (2024-2025)",
+    x = "Time (Weekly)",
+    y = "Normalized Score (0-100)",
+    color = ""
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(
+    legend.position = "bottom",
+    plot.title = element_text(face = "bold", size = 13),
+    panel.grid.minor = element_blank(),
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+
+print(p_israel_gaza)
+
+ggsave("Plot_TS_IsraelGaza_Single.pdf", p_israel_gaza, width = 16, height = 9, units = "cm")
+```
+
+## Stationary ADF Test
+
+Function to run Augmented Dickey-Fuller (ADF) tests for all topics in an outlet. This test confirms whether the underlying statistical properties are constant over time, which is a necessary condition for reliable Granger causality results and significance.
+
+```{r}
+
+# Function to run Augmented Dickey-Fuller (ADF) tests for all topics in an outlet
+check_stationarity <- function(data, outlet_prefix) {
+  media_cols <- names(data)[grep(paste0("^", outlet_prefix, "_.*_norm$"), names(data))]
+  topics <- gsub(paste0("^", outlet_prefix, "_|_norm$"), "", media_cols)
+  
+  lapply(topics, function(t) {
+    media_series <- na.omit(data[[paste0(outlet_prefix, "_", t, "_norm")]])
+    public_series <- na.omit(data[[paste0(outlet_prefix, "_", t, "_gt")]])
+    
+    # Run ADF test (Null Hypothesis: Series is non-stationary)
+    # A p-value < 0.05 indicates the series is stationary
+    adf_media <- adf.test(media_series)
+    adf_public <- adf.test(public_series)
+    
+    data.frame(
+      Outlet = outlet_prefix,
+      Topic = t,
+      ADF_p_Media = adf_media$p.value,
+      ADF_p_Public = adf_public$p.value,
+      Stationary_Media = ifelse(adf_media$p.value < 0.05, "Yes", "No"),
+      Stationary_Public = ifelse(adf_public$p.value < 0.05, "Yes", "No")
+    )
+  }) %>% bind_rows()
+}
+
+stationarity_results <- bind_rows(
+  check_stationarity(Model_1_Result_Input, "TS"),
+  check_stationarity(Model_1_Result_Input, "NYT")
+)
+
+print(stationarity_results)
+
+non_stationary_cases <- stationarity_results %>% 
+  filter(Stationary_Media == "No" | Stationary_Public == "No")
+
+print(non_stationary_cases)
+```
+
+## First Differences Table
+
+To ensure statistical validity, this part calculates Pearson's correlation using First Differences ($\Delta$) for any topic- Including information on the ADF tests stationarity.
+
+```{r}
+#| label: First Differences (All Topics)
+
+
+# function to calculate first difference correlations for ALL topics
+get_first_diff_correlations <- function(data, outlet_prefix) {
+  
+  cols <- names(data)[grep(paste0("^", outlet_prefix, "_.*_norm$"), names(data))]
+  topics <- gsub(paste0("^", outlet_prefix, "_|_norm$"), "", cols)
+  
+  results <- lapply(topics, function(t) {
+    media_raw <- data[[paste0(outlet_prefix, "_", t, "_norm")]]
+    public_raw <- data[[paste0(outlet_prefix, "_", t, "_gt")]]
+    
+    valid_indices <- complete.cases(media_raw, public_raw)
+    media <- media_raw[valid_indices]
+    public <- public_raw[valid_indices]
+    
+    adf_media <- adf.test(media)$p.value
+    adf_public <- adf.test(public)$p.value
+    
+    both_stationary <- ifelse((adf_media < 0.05) & (adf_public < 0.05), "Yes", "No")
+    
+    test <- cor.test(diff(media), diff(public), method = "pearson")
+    
+    # extract statistical values
+    r_val <- test$estimate
+    p_stat <- test$p.value
+    
+    # define significance stars
+    stars <- case_when(
+      p_stat < 0.001 ~ "***",
+      p_stat < 0.01  ~ "**",
+      p_stat < 0.05  ~ "*",
+      TRUE           ~ ""
+    )
+    
+    data.frame(
+      Outlet = outlet_prefix,
+      Topic = t,
+      r = r_val,
+      p_value = p_stat,
+      display_r = paste0(sprintf("%.2f", r_val), stars),
+      Stationary = both_stationary
+    )
+  })
+  
+  bind_rows(results)
+}
+
+first_diff_table <- bind_rows(
+  get_first_diff_correlations(Model_1_Result_Input, "TS"),
+  get_first_diff_correlations(Model_1_Result_Input, "NYT")
+) %>%
+  arrange(desc(r))
+
+library(knitr)
+first_diff_latex <- kable(
+  first_diff_table %>% dplyr::select(Outlet, Topic, `Pearson's r (Δ)` = display_r, `p-value` = p_value, `Stationary (Raw)` = Stationary),
+  format = "latex",
+  booktabs = TRUE,
+  digits = 3,
+  row.names = FALSE,
+  caption = "Correlation analysis of weekly changes (First Differences) between Media Attention and Public Interest. To ensure methodological consistency and avoid spurious correlations, all time series were transformed using First Differences. The 'Stationary (Raw)' column indicates whether the underlying raw time series were already stationary according to the ADF test.",
+  label = "tab:correlations_first_diff"
+)
+
+cat(first_diff_latex, sep = "\n")
+```
+
+# H3 - Time Lags
+
+## Basic Time Lags
+
+This computes simple cross-correlations by shifting the time series up to two weeks forward and backward ($t-2$ to $t+2$) to identify basic lead-lag patterns.
+
+```{r}
+
+# Function to calculate lagged correlations and significance
+calculate_lagged_cors <- function(data, outlet_prefix) {
+  
+  cols <- names(data)[grep(paste0("^", outlet_prefix, "_.*_norm$"), names(data))]
+  topics <- gsub(paste0("^", outlet_prefix, "_|_norm$"), "", cols)
+  
+  results <- lapply(topics, function(t) {
+    media <- data[[paste0(outlet_prefix, "_", t, "_norm")]]
+    public <- data[[paste0(outlet_prefix, "_", t, "_gt")]]
+    
+    lags <- c(-2, -1, 0, 1, 2)
+    
+    lag_stats <- sapply(lags, function(l) {
+      m_shifted <- if(l < 0) lag(media, abs(l)) else if(l > 0) lead(media, l) else media
+      
+      test <- cor.test(m_shifted, public, method = "pearson", use = "complete.obs")
+      
+      # Map p-values to significance stars
+      stars <- case_when(
+        test$p.value < 0.001 ~ "***",
+        test$p.value < 0.01  ~ "**",
+        test$p.value < 0.05  ~ "*",
+        TRUE                 ~ ""
+      )
+      return(paste0(sprintf("%.2f", test$estimate), stars))
+    })
+    
+    data.frame(
+      Outlet = outlet_prefix,
+      Topic = t,
+      t_minus_2 = lag_stats[1],
+      t_minus_1 = lag_stats[2],
+      t_0 = lag_stats[3],
+      t_plus_1 = lag_stats[4],
+      t_plus_2 = lag_stats[5]
+    )
+  })
+  
+  bind_rows(results)
+}
+
+# Generate lag data for both outlets
+lag_table_data <- bind_rows(
+  calculate_lagged_cors(Model_1_Result_Input, "TS"),
+  calculate_lagged_cors(Model_1_Result_Input, "NYT")
+)
+
+lag_table_final <- lag_table_data %>%
+  gt(groupname_col = "Outlet") %>%
+  tab_header(
+    title = "Cross-Correlation Analysis with Time Lags",
+    subtitle = "Pearson's r coefficients for Media vs. Public Interest (shifted by weeks)"
+  ) %>%
+  cols_label(
+    Topic = "Topic",
+    t_minus_2 = "t-2",
+    t_minus_1 = "t-1",
+    t_0 = "t (Simult.)",
+    t_plus_1 = "t+1",
+    t_plus_2 = "t+2"
+  ) %>%
+  tab_spanner(
+    label = "Media Leads Public",
+    columns = c(t_minus_2, t_minus_1)
+  ) %>%
+  tab_spanner(
+    label = "Public Leads Media",
+    columns = c(t_plus_1, t_plus_2)
+  ) %>%
+  tab_source_note(
+    source_note = "Note: Media Leads indicates potential Agenda-Setting; Public Leads indicates potential Reverse Agenda-Setting. Stars: ***p < .001, **p < .01, *p < .05."
+  ) %>%
+  tab_options(
+    table.font.size = 10,
+    column_labels.font.weight = "bold",
+    row_group.font.weight = "bold"
+  )
+
+# View and save
+lag_table_final
+gtsave(lag_table_final, "Lag_Correlation_Table_M1.pdf")
+```
+
+## Granger Causality for stationary topics
+
+This runs a standard Granger causality test at a 1-week lag exclusively for stationary topics, testing if media attention statistically predicts public interest or vice versa.
+
+```{r}
+#| label: Granger Analysis (Stationary Topics Only)
+
+
+stationary_topics_ts <- c("IsraelGaza", "EURightwing", "Accidents", "UkraineWar", "Elections", "MilitaryGeopolitics", "NaturalDisasters")
+stationary_topics_nyt <- c("IsraelGaza", "UkraineWar", "EconomicCrisis")
+
+run_granger_stationary <- function(data, outlet_prefix, valid_topics) {
+  
+  results <- lapply(valid_topics, function(t) {
+    media <- data[[paste0(outlet_prefix, "_", t, "_norm")]]
+    public <- data[[paste0(outlet_prefix, "_", t, "_gt")]]
+    
+    # Granger Tests
+    g_m_to_p <- grangertest(public ~ media, order = 1)
+    p_m_to_p <- g_m_to_p$`Pr(>F)`[2]
+    
+    g_p_to_m <- grangertest(media ~ public, order = 1)
+    p_p_to_m <- g_p_to_m$`Pr(>F)`[2]
+    
+    get_stars <- function(p) {
+      case_when(
+        p < 0.001 ~ "***", 
+        p < 0.01  ~ "**", 
+        p < 0.05  ~ "*", 
+        p < 0.1   ~ ".", 
+        TRUE      ~ "ns"
+      )}
+    
+    display_topic <- case_when(
+      t == "IsraelGaza" ~ "Israel & Gaza",
+      t == "EURightwing" ~ "EU Rightwing",
+      t == "MilitaryGeopolitics" ~ "Military & Geopolitics",
+      t == "NaturalDisasters" ~ "Natural Disasters",
+      t == "UkraineWar" ~ "Ukraine War",
+      t == "EconomicCrisis" ~ "Economic Crisis",
+      TRUE ~ t
+    )
+    
+    data.frame(
+      Outlet = outlet_prefix,
+      Topic = display_topic,
+      f_val_m_to_p = g_m_to_p$F[2],
+      p_val_m_to_p = p_m_to_p,
+      sig_m_to_p = get_stars(p_m_to_p),
+      f_val_p_to_m = g_p_to_m$F[2],
+      p_val_p_to_m = p_p_to_m,
+      sig_p_to_m = get_stars(p_p_to_m)
+    )
+  })
+  
+  bind_rows(results)
+}
+
+granger_results_stat <- bind_rows(
+  run_granger_stationary(Model_1_Result_Input, "TS", stationary_topics_ts),
+  run_granger_stationary(Model_1_Result_Input, "NYT", stationary_topics_nyt)
+)
+
+latex_df <- granger_results_stat %>%
+  mutate(
+    f_val_m_to_p = sprintf("%.2f", f_val_m_to_p),
+    p_val_m_to_p = sprintf("%.3f", p_val_m_to_p),
+    f_val_p_to_m = sprintf("%.2f", f_val_p_to_m),
+    p_val_p_to_m = sprintf("%.3f", p_val_p_to_m)
+  ) %>%
+  dplyr::select(
+    Outlet, Topic,
+    `F (M->P)` = f_val_m_to_p,
+    `p (M->P)` = p_val_m_to_p,
+    `Sig. ` = sig_m_to_p,     
+    `F (P->M)` = f_val_p_to_m,
+    `p (P->M)` = p_val_p_to_m,
+    `Sig.` = sig_p_to_m
+  )
+
+# Latex Table
+granger_latex <- kable(
+  latex_df,
+  format = "latex",
+  booktabs = TRUE,
+  row.names = FALSE,
+  align = c("l", "l", "r", "r", "l", "r", "r", "l"),
+  caption = "Results of the Granger causality analysis for strictly stationary foreign news topics (Lag = 1 week). The analysis tests whether weekly variations in media coverage significantly precede public interest or vice versa. Significance levels: *** p < .001, ** p < .01, * p < .05, . p < .1, ns = not significant.",
+  label = "tab:granger_causality_stationary"
+)
+
+cat(granger_latex, sep = "\n")
+```
+
+## Extended Time Lag Analysis (First Differences) Media -\> Public
+
+This robustness analysis tests whether weekly changes in Media Attention precede weekly changes in Public Interest across longer lags ($t1$--$t5$). In contrast to the standard Granger model, all topics are estimated using First Differences ($\Delta$) to reduce the risk of spurious lagged relationships caused by non-stationary trends.
+
+```{r}
+#| label: granger_first_diff_all_topics
+
+# Function to run Granger causality for all lags
+run_granger_fd <- function(data, outlet_prefix, max_lag = 5) {
+  
+  media_cols <- names(data)[grep(
+    paste0("^", outlet_prefix, "_.*_norm$"),
+    names(data)
+  )]
+  
+  topics <- gsub(
+    paste0("^", outlet_prefix, "_|_norm$"),
+    "",
+    media_cols
+  )
+  
+  results <- map_dfr(topics, function(topic) {
+    
+    media_col <- paste0(outlet_prefix, "_", topic, "_norm")
+    public_col <- paste0(outlet_prefix, "_", topic, "_gt")
+    
+    # Skip topics without GT variable
+    if (!public_col %in% names(data)) {
+      return(NULL)
+    }
+    
+    # Apply first differences
+    media_diff <- diff(data[[media_col]])
+    public_diff <- diff(data[[public_col]])
+    
+    df <- tibble(
+      media = media_diff,
+      public = public_diff
+    ) %>%
+      drop_na()
+    
+    map_dfr(1:max_lag, function(lag_k) {
+      
+      # Estimate VAR model
+      model <- tryCatch(
+        VAR(df, p = lag_k, type = "const"),
+        error = function(e) NULL
+      )
+      
+      if (is.null(model)) {
+        return(NULL)
+      }
+      
+      # Media -> Public
+      granger_result <- tryCatch(
+        causality(model, cause = "media")$Granger,
+        error = function(e) NULL
+      )
+      
+      if (is.null(granger_result)) {
+        return(NULL)
+      }
+      
+      tibble(
+        Outlet = outlet_prefix,
+        Topic = topic,
+        Lag = lag_k,
+        F_value = as.numeric(granger_result$statistic),
+        p_value = as.numeric(granger_result$p.value)
+      )
+    })
+  })
+  
+  return(results)
+}
+
+# Run for both outlets
+granger_fd_all <- bind_rows(
+  run_granger_fd(Model_1_Result_Input, "TS"),
+  run_granger_fd(Model_1_Result_Input, "NYT")
+)
+
+# Add significance stars
+granger_fd_all <- granger_fd_all %>%
+  mutate(
+    sig = case_when(
+      p_value < 0.001 ~ "***",
+      p_value < 0.01  ~ "**",
+      p_value < 0.05  ~ "*",
+      p_value < 0.10  ~ ".",
+      TRUE ~ ""
+    ),
+    
+    Topic_Label = paste(Outlet, Topic)
+  )
+
+# Plot
+ggplot(
+  granger_fd_all,
+  aes(
+    x = factor(Lag),
+    y = reorder(Topic_Label, F_value),
+    fill = F_value
+  )
+) +
+  geom_tile(color = "white", linewidth = 0.3) +
+  
+  geom_text(
+    aes(label = sig),
+    size = 4
+  ) +
+  
+  scale_fill_gradient(
+    low = "grey90",
+    high = "#003366",
+    name = "F-value"
+  ) +
+  
+  labs(
+    title = "Lead--Lag Dynamics: Media Leading Public",
+    subtitle = "Granger causality using First Differences (t1-t5)",
+    x = "Lag (Weeks)",
+    y = "Topic"
+  ) +
+  
+  theme_minimal(base_size = 11) +
+  theme(
+    panel.grid = element_blank(),
+    axis.text.x = element_text(face = "bold"),
+    axis.text.y = element_text(size = 9),
+    plot.title = element_text(face = "bold"),
+    legend.position = "right"
+  )
+```
+
+## Extended Lag Analysis: Public Leading Media
+
+This analysis tests whether weekly changes in Public Interest precede weekly changes in Media Attention across longer lag structures ($t1$--$t5$). In contrast to the standard Granger model, all topics are estimated using First Differences ($\Delta$) to reduce the risk of spurious lagged relationships caused by non-stationary trends. The analysis therefore includes reverse agenda-setting (public leads media).
+
+```{r}
+#| label: granger first diff all topics_reverse
+
+
+# Function to run reverse Granger causality for all lags
+run_granger_fd_reverse <- function(data, outlet_prefix, max_lag = 5) {
+  
+  media_cols <- names(data)[grep(
+    paste0("^", outlet_prefix, "_.*_norm$"),
+    names(data)
+  )]
+  
+  topics <- gsub(
+    paste0("^", outlet_prefix, "_|_norm$"),
+    "",
+    media_cols
+  )
+  
+  results <- map_dfr(topics, function(topic) {
+    
+    media_col <- paste0(outlet_prefix, "_", topic, "_norm")
+    public_col <- paste0(outlet_prefix, "_", topic, "_gt")
+    
+    # Skip topics without GT variable
+    if (!public_col %in% names(data)) {
+      return(NULL)
+    }
+    
+    # Apply first differences
+    media_diff <- diff(data[[media_col]])
+    public_diff <- diff(data[[public_col]])
+    
+    df <- tibble(
+      media = media_diff,
+      public = public_diff
+    ) %>%
+      drop_na()
+    
+    map_dfr(1:max_lag, function(lag_k) {
+      
+      # Estimate VAR model
+      model <- tryCatch(
+        VAR(df, p = lag_k, type = "const"),
+        error = function(e) NULL
+      )
+      
+      if (is.null(model)) {
+        return(NULL)
+      }
+      
+      # Public -> Media
+      granger_result <- tryCatch(
+        causality(model, cause = "public")$Granger,
+        error = function(e) NULL
+      )
+      
+      if (is.null(granger_result)) {
+        return(NULL)
+      }
+      
+      tibble(
+        Outlet = outlet_prefix,
+        Topic = topic,
+        Lag = lag_k,
+        F_value = as.numeric(granger_result$statistic),
+        p_value = as.numeric(granger_result$p.value)
+      )
+    })
+  })
+  
+  return(results)
+}
+
+# Run for both outlets
+granger_fd_reverse <- bind_rows(
+  run_granger_fd_reverse(Model_1_Result_Input, "TS"),
+  run_granger_fd_reverse(Model_1_Result_Input, "NYT")
+)
+
+# Add significance stars
+granger_fd_reverse <- granger_fd_reverse %>%
+  mutate(
+    sig = case_when(
+      p_value < 0.001 ~ "***",
+      p_value < 0.01  ~ "**",
+      p_value < 0.05  ~ "*",
+      p_value < 0.10  ~ ".",
+      TRUE ~ ""
+    ),
+    
+    Topic_Label = paste(Outlet, Topic)
+  )
+
+# Plot
+ggplot(
+  granger_fd_reverse,
+  aes(
+    x = factor(Lag),
+    y = reorder(Topic_Label, F_value),
+    fill = F_value
+  )
+) +
+  geom_tile(color = "white", linewidth = 0.3) +
+  
+  geom_text(
+    aes(label = sig),
+    size = 4
+  ) +
+  
+  scale_fill_gradient(
+    low = "grey90",
+    high = "#003366",
+    name = "F-value"
+  ) +
+  
+  labs(
+    title = "Lead--Lag Dynamics: Public Leading Media",
+    subtitle = "Granger causality using First Differences (t1-t5)",
+    x = "Lag (Weeks)",
+    y = "Topic"
+  ) +
+  
+  theme_minimal(base_size = 11) +
+  theme(
+    panel.grid = element_blank(),
+    axis.text.x = element_text(face = "bold"),
+    axis.text.y = element_text(size = 9),
+    plot.title = element_text(face = "bold"),
+    legend.position = "right"
+  )
+```
+
+## Identify optimal lag per topic
+
+This calculates the AIC-optimal lag (from 1 to 4 weeks maximizing F value) for every topic and creates a visualization / plot. This is important as the basic Ganger Causality Framework is stationary, meaning that only a fixed lag time intervall can be tested, ie. 1 week without this being the real underlying lag necessarily.
+
+```{r}
+
+
+# Function to run optimized Granger analysis including significance
+get_optimized_granger_data <- function(data, outlet_prefix) {
+  cols <- names(data)[grep(paste0("^", outlet_prefix, "_.*_norm$"), names(data))]
+  topics <- gsub(paste0("^", outlet_prefix, "_|_norm$"), "", cols)
+  
+  lapply(topics, function(t) {
+    # Extract media and public interest series
+    media <- data[[paste0(outlet_prefix, "_", t, "_norm")]]
+    public <- data[[paste0(outlet_prefix, "_", t, "_gt")]]
+    
+    # Create a matrix and remove any missing values for statistical consistency
+    temp_mat <- cbind(media, public) %>% na.omit()
+
+    lag_sel <- VARselect(temp_mat, lag.max = 4, type = "both")
+    opt_lag <- lag_sel$selection["AIC(n)"]
+    
+    # Run the Granger test at the mathematically optimal lag
+    g_test <- grangertest(public ~ media, order = opt_lag)
+    f_stat <- g_test$F[2]
+    p_val <- g_test$`Pr(>F)`[2]
+    
+    # Categorize the results for visualization based on p-value thresholds
+    # This ensures the plot distinguishes between 'noise' and 'valid leads'
+    result_cat <- case_when(
+      p_val < 0.05 ~ "Significant (p < .05)",
+      p_val < 0.1  ~ "Marginal Trend (p < .1)",
+      TRUE         ~ "Not Significant"
+    )
+    
+    data.frame(
+      Outlet = outlet_prefix,
+      Topic = t,
+      Optimal_Lag = opt_lag,
+      F_Score = f_stat,
+      P_Value = p_val,
+      Result = result_cat
+    )
+  }) %>% bind_rows()
+}
+
+# Generate data for both Tagesschau and New York Times
+granger_plot_data <- bind_rows(
+  get_optimized_granger_data(Model_1_Result_Input, "TS"),
+  get_optimized_granger_data(Model_1_Result_Input, "NYT")
+)
+
+# Create the visualization with significance-coded colors
+ggplot(granger_plot_data, aes(x = reorder(Topic, Optimal_Lag), y = Optimal_Lag, fill = Result)) +
+  geom_bar(stat = "identity", alpha = 0.9, width = 0.7) +
+  coord_flip() +
+  facet_wrap(~Outlet, scales = "free_y") +
+  # Use blue tones for significant results and gray for non-significant ones
+  scale_fill_manual(values = c(
+    "Significant (p < .05)" = "#2c7bb6",
+    "Marginal Trend (p < .1)" = "#abd9e9",
+    "Not Significant" = "#d3d3d3"
+  )) +
+  scale_y_continuous(breaks = 1:4, limits = c(0, 4)) +
+  labs(
+    title = "Optimal Granger Lags & Statistical Significance",
+    subtitle = "Bars indicate the AIC-selected lag; colors represent statistical validity",
+    x = "News Topic",
+    y = "Optimal Predictive Window (Weeks)",
+    fill = "Test Result"
+  ) +
+  theme_minimal() +
+  theme(panel.grid.minor = element_blank())
+```
+
+## Facet Plots: Robustness Time Series of Media Attention vs. Google Trends (Model 2)
+
+This re-plots the topic time-series grids using the alternative Model 2 dataset, visually demonstrating the smoothing impact of the added temporal covariates.
+
+```{r}
+#| label: facet-plots-model-2
+#| fig-cap: "Time-series comparison of normalized Media Attention and Public Interest for Model 2."
+
+plot_outlet_grid_m2 <- function(data, outlet_prefix) {
+  
+  # reshape data to long format for ggplot
+  plot_data <- data %>%
+    dplyr::select(week_start, starts_with(paste0(outlet_prefix, "_"))) %>%
+    pivot_longer(-week_start, names_to = "key", values_to = "value") %>%
+    mutate(
+      # extract clean topic names by stripping prefix, _cov, _norm, and _gt 
+      # this ensures that media data and gt data match perfectly to the same facet
+      topic = gsub(paste0("^", outlet_prefix, "_|_cov|_norm|_gt"), "", key),
+      
+      # assign readable labels to series types
+      type = ifelse(grepl("_norm", key), "Media Attention", "Public Interest (GT)")
+    )
+
+  # create the faceted time-series plot
+  ggplot(plot_data, aes(x = as.Date(week_start), y = value, color = type)) +
+    # baseline at zero
+    geom_hline(yintercept = 0, color = "black", linewidth = 0.4) +
+    geom_line(linewidth = 0.6) +
+    facet_wrap(~topic, ncol = 3, scales = "fixed") + 
+    scale_color_manual(values = c("Media Attention" = "#003366", "Public Interest (GT)" = "#E69F00")) +
+    scale_y_continuous(limits = c(0, 100), breaks = seq(0, 100, 50)) +
+    scale_x_date(date_labels = "%y", date_breaks = "1 year") +
+    labs(
+      title = paste("Topic Comparison:", outlet_prefix, "(Model 2)"),
+      subtitle = "Time-series of Media Attention vs. Google Trends (2024-2025)",
+      x = "Year",
+      y = "Normalized Score (0-100)",
+      color = ""
+    ) +
+    theme_minimal(base_size = 10) +
+    theme(
+      legend.position = "bottom",
+      strip.text = element_text(face = "bold"),
+      panel.spacing = unit(1, "lines"),
+      panel.grid.minor = element_blank(),
+      axis.text.x = element_text(angle = 0)
+    )
+}
+
+grid_ts_m2 <- plot_outlet_grid_m2(Model_2_Result_Input, "TS")
+grid_nyt_m2 <- plot_outlet_grid_m2(Model_2_Result_Input, "NYT")
+
+print(grid_ts_m2)
+print(grid_nyt_m2)
+
+# save as pdf with a4-optimized dimensions for the thesis appendix
+ggsave("Grid_TS_All_Topics_M2.pdf", grid_ts_m2, width = 18, height = 22, units = "cm")
+ggsave("Grid_NYT_All_Topics_M2.pdf", grid_nyt_m2, width = 18, height = 20, units = "cm")
+```
+
+## Robustness Full Correlation Table
+
+This generates a hybrid correlation table for Model 2, applying regular Pearson's $r$ for stationary topics and First Differences for non-stationary ones to ensure valid robustness metrics.
+
+```{r}
+#| label: Hybrid Correlation Table Model 2
+#| echo: false
+#| results: asis
+
+library(dplyr)
+library(knitr)
+
+stat_map <- data.frame(
+  Outlet = c("NYT", "TS", "TS", "NYT", "TS", "TS", "TS", "TS", "TS", "TS", 
+             "NYT", "NYT", "NYT", "TS", "NYT", "NYT", "TS", "NYT", "TS", "NYT"),
+  Topic_Raw = c("SyriaPolitics", "IsraelGaza", "USPolitics", "IsraelGaza", "Accidents", 
+                "EURightwing", "MilitaryGeopolitics", "NaturalDisasters", "ClimateFires", 
+                "EUPolitics", "AsiaGeopolitics", "UkraineWar", "Accidents", "Elections", 
+                "GlobalLeaders", "ReligionCulture", "Diplomacy", "CrimeJustice", 
+                "UkraineWar", "EconomicCrisis"),
+  Stationary = c("No", "Yes", "No", "Yes", "Yes", "Yes", "Yes", "Yes", "No", "No", 
+                 "No", "Yes", "No", "Yes", "No", "No", "No", "No", "Yes", "Yes")
+)
+
+calc_hybrid_cor <- function(data, outlet, topic, is_stationary) {
+  
+  col_media <- paste0(outlet, "_", topic, "_norm_cov")
+  col_public <- paste0(outlet, "_", topic, "_gt")
+  
+  if(!col_media %in% names(data) | !col_public %in% names(data)) return(NULL)
+  
+  media <- data[[col_media]]
+  public <- data[[col_public]]
+  
+  valid_idx <- complete.cases(media, public)
+  media <- media[valid_idx]
+  public <- public[valid_idx]
+  
+  if(is_stationary == "Yes") {
+    res <- cor.test(media, public, method = "pearson")
+    method_label <- "Pearson's $r$"
+  } else {
+    res <- cor.test(diff(media), diff(public), method = "pearson")
+    method_label <- "Pearson's $r(\\Delta)$"
+  }
+  
+  p_val <- res$p.value
+  est <- as.numeric(res$estimate) # Ensures a clean numeric value for sorting
+  
+  stars <- case_when(
+    p_val < 0.001 ~ "***",
+    p_val < 0.01  ~ "**",
+    p_val < 0.05  ~ "*",
+    TRUE          ~ ""
+  )
+  
+  display_topic <- case_when(
+    topic == "SyriaPolitics" ~ "Syria Politics",
+    topic == "IsraelGaza" ~ "Israel \\& Gaza",
+    topic == "USPolitics" ~ "US Politics",
+    topic == "Accidents" ~ "Accidents",
+    topic == "EURightwing" ~ "EU Rightwing",
+    topic == "MilitaryGeopolitics" ~ "Military \\& Geopolitics",
+    topic == "NaturalDisasters" ~ "Natural Disasters",
+    topic == "ClimateFires" ~ "Climate \\& Fires",
+    topic == "EUPolitics" ~ "EU Politics",
+    topic == "AsiaGeopolitics" ~ "Asia Geopolitics",
+    topic == "UkraineWar" ~ "Ukraine War",
+    topic == "Elections" ~ "Elections",
+    topic == "GlobalLeaders" ~ "Global Leaders",
+    topic == "ReligionCulture" ~ "Religion \\& Culture",
+    topic == "Diplomacy" ~ "Diplomacy",
+    topic == "CrimeJustice" ~ "Crime \\& Justice",
+    topic == "EconomicCrisis" ~ "Economic Crisis",
+    TRUE ~ topic
+  )
+  
+  data.frame(
+    Outlet = paste0("\\ac{", outlet, "}"),
+    Topic = display_topic,
+    Method = method_label,
+    Estimate_Num = est, # Used to safely sort
+    Correlation = sprintf("%.3f%s", est, stars),
+    P_Value = sprintf("%.3f", p_val),
+    Stationary = is_stationary,
+    stringsAsFactors = FALSE
+  )
+}
+
+results_list <- list()
+for(i in 1:nrow(stat_map)) {
+  row_res <- calc_hybrid_cor(Model_2_Result_Input, stat_map$Outlet[i], stat_map$Topic_Raw[i], stat_map$Stationary[i])
+  if(!is.null(row_res)) {
+    results_list[[i]] <- row_res
+  }
+}
+
+hybrid_df_m2 <- bind_rows(results_list) %>%
+  arrange(desc(Estimate_Num)) %>%
+  dplyr::select(
+    Outlet, 
+    Topic, 
+    Method,
+    Correlation, 
+    `p-value` = P_Value, 
+    `Stat. (ADF)` = Stationary
+  )
+
+latex_hybrid <- kable(
+  hybrid_df_m2,
+  format = "latex",
+  booktabs = TRUE,
+  row.names = FALSE,
+  escape = FALSE, 
+  align = c("l", "l", "l", "r", "r", "c"),
+  caption = "Hybrid Correlation Analysis for Model 2. The table combines regular Pearson's $r$ for stationary topics with the First Differences approach $r(\\Delta)$ for non-stationary topics to ensure robust estimates across all dynamics. Significance levels: *** $p < 0.001$, ** $p < 0.01$, * $p < 0.05$.",
+  label = "tab:results_corr_hybrid_m2"
+)
+
+cat(latex_hybrid, sep = "\n")
+```
+
+## H3 Granger Robustness t1 check with Model 2
+
+```{r}
+#| label: Hybrid Granger Causality Table Model 2
+#| echo: false
+#| results: asis
+
+library(dplyr)
+library(knitr)
+library(lmtest)
+
+stat_map <- data.frame(
+  Outlet = c("NYT", "TS", "TS", "NYT", "TS", "TS", "TS", "TS", "TS", "TS", 
+             "NYT", "NYT", "NYT", "TS", "NYT", "NYT", "TS", "NYT", "TS", "NYT"),
+  Topic_Raw = c("SyriaPolitics", "IsraelGaza", "USPolitics", "IsraelGaza", "Accidents", 
+                "EURightwing", "MilitaryGeopolitics", "NaturalDisasters", "ClimateFires", 
+                "EUPolitics", "AsiaGeopolitics", "UkraineWar", "Accidents", "Elections", 
+                "GlobalLeaders", "ReligionCulture", "Diplomacy", "CrimeJustice", 
+                "UkraineWar", "EconomicCrisis"),
+  Stationary = c("No", "Yes", "No", "Yes", "Yes", "Yes", "Yes", "Yes", "No", "No", 
+                 "No", "Yes", "No", "Yes", "No", "No", "No", "No", "Yes", "Yes")
+)
+
+calc_hybrid_granger <- function(data, outlet, topic, is_stationary) {
+  
+  col_media <- paste0(outlet, "_", topic, "_norm_cov")
+  col_public <- paste0(outlet, "_", topic, "_gt")
+  
+  if(!col_media %in% names(data) | !col_public %in% names(data)) return(NULL)
+  
+  media <- data[[col_media]]
+  public <- data[[col_public]]
+  
+  valid_idx <- complete.cases(media, public)
+  media <- media[valid_idx]
+  public <- public[valid_idx]
+  
+  if(is_stationary == "Yes") {
+    g_m_to_p <- grangertest(public ~ media, order = 1)
+    g_p_to_m <- grangertest(media ~ public, order = 1)
+    method_label <- "Granger (Raw)"
+  } else {
+    g_m_to_p <- grangertest(diff(public) ~ diff(media), order = 1)
+    g_p_to_m <- grangertest(diff(media) ~ diff(public), order = 1)
+    method_label <- "Granger ($\\Delta$)"
+  }
+  
+  f_val_m2p <- g_m_to_p$F[2]
+  p_val_m2p <- g_m_to_p$`Pr(>F)`[2]
+  
+  f_val_p2m <- g_p_to_m$F[2]
+  p_val_p2m <- g_p_to_m$`Pr(>F)`[2]
+  
+  get_stars <- function(p) {
+    case_when(
+      p < 0.001 ~ "***",
+      p < 0.01  ~ "**",
+      p < 0.05  ~ "*",
+      p < 0.1   ~ ".",
+      TRUE      ~ "ns"
+    )
+  }
+  
+  display_topic <- case_when(
+    topic == "SyriaPolitics" ~ "Syria Politics",
+    topic == "IsraelGaza" ~ "Israel \\& Gaza",
+    topic == "USPolitics" ~ "US Politics",
+    topic == "Accidents" ~ "Accidents",
+    topic == "EURightwing" ~ "EU Rightwing",
+    topic == "MilitaryGeopolitics" ~ "Military \\& Geopolitics",
+    topic == "NaturalDisasters" ~ "Natural Disasters",
+    topic == "ClimateFires" ~ "Climate \\& Fires",
+    topic == "EUPolitics" ~ "EU Politics",
+    topic == "AsiaGeopolitics" ~ "Asia Geopolitics",
+    topic == "UkraineWar" ~ "Ukraine War",
+    topic == "Elections" ~ "Elections",
+    topic == "GlobalLeaders" ~ "Global Leaders",
+    topic == "ReligionCulture" ~ "Religion \\& Culture",
+    topic == "Diplomacy" ~ "Diplomacy",
+    topic == "CrimeJustice" ~ "Crime \\& Justice",
+    topic == "EconomicCrisis" ~ "Economic Crisis",
+    TRUE ~ topic
+  )
+  
+  data.frame(
+    Outlet = paste0("\\ac{", outlet, "}"),
+    Topic = display_topic,
+    Method = method_label,
+    F_M2P = f_val_m2p,
+    P_M2P = p_val_m2p,
+    Sig_M2P = get_stars(p_val_m2p),
+    F_P2M = f_val_p2m,
+    P_P2M = p_val_p2m,
+    Sig_P2M = get_stars(p_val_p2m),
+    stringsAsFactors = FALSE
+  )
+}
+
+granger_results_list <- list()
+for(i in 1:nrow(stat_map)) {
+  row_res <- calc_hybrid_granger(Model_2_Result_Input, stat_map$Outlet[i], stat_map$Topic_Raw[i], stat_map$Stationary[i])
+  if(!is.null(row_res)) {
+    granger_results_list[[i]] <- row_res
+  }
+}
+
+hybrid_granger_m2 <- bind_rows(granger_results_list) %>%
+  arrange(desc(F_M2P)) %>%
+  mutate(
+    F_M2P = sprintf("%.2f", F_M2P),
+    P_M2P = sprintf("%.3f", P_M2P),
+    F_P2M = sprintf("%.2f", F_P2M),
+    P_P2M = sprintf("%.3f", P_P2M)
+  ) %>%
+  dplyr::select(
+    Outlet, 
+    Topic, 
+    Method,
+    `F (M->P)` = F_M2P,
+    `p (M->P)` = P_M2P,
+    `Sig. ` = Sig_M2P, 
+    `F (P->M)` = F_P2M,
+    `p (P->M)` = P_P2M,
+    `Sig.` = Sig_P2M
+  )
+
+latex_granger_hybrid <- kable(
+  hybrid_granger_m2,
+  format = "latex",
+  booktabs = TRUE,
+  row.names = FALSE,
+  escape = FALSE,
+  align = c("l", "l", "l", "r", "r", "l", "r", "r", "l"),
+  caption = "Hybrid Granger Causality Analysis for Model 2 (Lag = 1 week). The table applies standard Granger tests for stationary topics and First Differences $\\Delta$ for non-stationary topics to maintain econometric robustness. Significance levels: *** $p < .001$, ** $p < .01$, * $p < .05$, . $p < .1$, ns = not significant.",
+  label = "tab:granger_hybrid_m2"
+)
+
+cat(latex_granger_hybrid, sep = "\n")
+```
